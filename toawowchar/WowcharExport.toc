@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Wowchar Export
+## Notes: Type /wowchar to get a text you can paste on the character's BiS page at wowchar. Sends nothing anywhere.
+## Version: 0.1.0
+## Author: toaweb
+WowcharExport.lua
