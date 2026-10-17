@@ -20,8 +20,8 @@ Copy the `WowcharExport` folder into the Forever client's `Interface/AddOns/` fo
 2. Type `/wowchar`. A window opens with the text selected.
 3. Press Ctrl+C to copy, close the window (Escape or Close; the text box lets go of the keyboard when the window closes).
 4. At wowchar, either
-   - **add the character**: «My characters» → «Add character from addon», paste the text. The character is created (or updated, if it is already yours) and you become its owner. The addon cannot prove who you are, so this ownership is unverified: if the character is later found on a Battle.net account, that account wins. A character that already belongs to another account is refused. Or
-   - **update a character you own**: on its BiS page, paste the text and import.
+   - **add the character**: «My characters» → «Add character from addon», paste the text. The character is added to your list (or updated, if it is already yours) and it is your character. The addon cannot prove who you are, so this is not verified. If the character already belongs to another account, you get an error and nothing is changed. A way for the player whose Battle.net account has the character to take it over is planned for after launch; it is not built yet. Character names must be 2 to 12 letters (no spaces or digits). Or
+   - **update one of your characters**: on its BiS page, paste the text and import.
 
    Either way the BiS items you already have are marked as obtained (it never takes an obtained mark back), and a snapshot of your gear and professions is stored.
 
