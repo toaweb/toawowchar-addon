@@ -1,17 +1,25 @@
--- WowcharExport 0.1.0
+-- WowcharExport 0.2.0
 --
 -- Type /wowchar to open a window with a text string (equipped items, bags,
 -- the bank if you opened it, professions, and who the character is). Copy it
--- (Ctrl+C) and paste it on the character's BiS page at wowchar, which marks the
--- BiS items you already have as obtained. The addon sends nothing anywhere, saves
--- nothing to disk (no SavedVariables) and does nothing until you type /wowchar,
--- apart from remembering what is in the bank while you have it open.
+-- (Ctrl+C) and paste it at wowchar: on «My characters» to add the character, or
+-- on the character's BiS page to mark the BiS items you already have as
+-- obtained. The addon sends nothing anywhere, saves nothing to disk (no
+-- SavedVariables) and does nothing until you type /wowchar, apart from
+-- remembering what is in the bank while you have it open.
 --
 -- The text format is decoded by wowchar's server/utils/addon-export.ts. That
 -- file and the table built in BuildPayload() below belong together: change one,
 -- change the other.
+--
+-- Region: identity.region is "US", "KR", "EU", "TW" or "CN", from
+-- GetCurrentRegion() (1 to 5). Any other value (the Forever test client reports
+-- 110) leaves region out and sends identity.regionId (the number) and
+-- identity.portal (the "portal" setting) instead; wowchar then does not compare
+-- regions. GetCurrentRegionName() is not used: it errors on the Forever test
+-- client. Every call below is guarded, so a missing function is never an error.
 
-local ADDON_VERSION = "0.1.0"
+local ADDON_VERSION = "0.2.0"
 local FORMAT_VERSION = 1
 local PREFIX = "WOWCHAR:" .. FORMAT_VERSION .. ":"
 
@@ -189,6 +197,46 @@ local function CollectSpec()
     return specId, specName
 end
 
+-- GetCurrentRegion() numbers the five regions; anything else is not one of them.
+local REGION_NAMES = { [1] = "US", [2] = "KR", [3] = "EU", [4] = "TW", [5] = "CN" }
+
+-- Returns region (a name from REGION_NAMES or nil), regionId (the number the
+-- client reported, only when it is not one of the five) and portal (a string or
+-- nil). Never raises.
+local function CollectRegion()
+    local id
+    if GetCurrentRegion then
+        local ok, value = pcall(GetCurrentRegion)
+        if ok and type(value) == "number" then
+            id = value
+        end
+    end
+    local region = id and REGION_NAMES[id] or nil
+
+    local portal
+    if GetCVar then
+        local ok, value = pcall(GetCVar, "portal")
+        if ok and type(value) == "string" and value ~= "" then
+            portal = value
+        end
+    end
+
+    if region then
+        return region, nil, nil
+    end
+    return nil, id, portal
+end
+
+local function CollectRealm()
+    if GetRealmName then
+        local ok, value = pcall(GetRealmName)
+        if ok and type(value) == "string" and value ~= "" then
+            return value
+        end
+    end
+    return nil
+end
+
 local function IsHardcore()
     if C_GameRules and C_GameRules.IsHardcoreActive then
         local ok, value = pcall(C_GameRules.IsHardcoreActive)
@@ -200,13 +248,10 @@ end
 -- Returns the payload table, or nil and a short reason.
 local function BuildPayload()
     local name = UnitName("player")
-    local region = GetCurrentRegionName and GetCurrentRegionName()
     if not name or name == "" then
         return nil, "Could not read the character's name."
     end
-    if not region or region == "" then
-        return nil, "Could not read the region."
-    end
+    local region, regionId, portal = CollectRegion()
 
     local _, classFile, classId = UnitClass("player")
     local _, build, _, interface = GetBuildInfo()
@@ -232,8 +277,10 @@ local function BuildPayload()
         capturedAt = time(),
         identity = {
             name = name,
-            region = region,
-            realm = GetRealmName and GetRealmName() or nil,
+            region = region, -- nil leaves the key out
+            regionId = regionId,
+            portal = portal,
+            realm = CollectRealm(), -- nil leaves the key out
             guid = UnitGUID("player"),
             classFile = classFile,
             classID = classId,
@@ -392,7 +439,7 @@ local function Run()
         return
     end
 
-    local message = "Press Ctrl+C to copy, then paste it on this character's BiS page at wowchar."
+    local message = "Press Ctrl+C to copy, then paste it at wowchar (My characters, or this character's BiS page)."
     if not bankSeen then
         message = message .. " The bank was not opened this session, so bank items are not included."
     end
