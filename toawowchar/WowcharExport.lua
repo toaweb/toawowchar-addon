@@ -2,8 +2,8 @@
 --
 -- Type /wowchar to open a window with a text string (equipped items, bags,
 -- the bank if you opened it, professions, and who the character is). Copy it
--- (Ctrl+C) and paste it on the character's BiS page at wowchar, which ticks off
--- the BiS items you already have. The addon sends nothing anywhere, saves
+-- (Ctrl+C) and paste it on the character's BiS page at wowchar, which marks the
+-- BiS items you already have as obtained. The addon sends nothing anywhere, saves
 -- nothing to disk (no SavedVariables) and does nothing until you type /wowchar,
 -- apart from remembering what is in the bank while you have it open.
 --
@@ -24,6 +24,7 @@ local LAST_EQUIPMENT_SLOT = 19
 -- What was seen in the bank, kept in memory only and lost at logout/reload.
 local bankItems = {}
 local bankSeen = false
+local bankSource = nil -- "tabs" or "classic": which kind of bank was read
 local bankOpen = false
 
 -- Set when a list had to be cut at MAX_IDS, so the window and the export can say
@@ -92,28 +93,60 @@ local function CollectBags()
     return list
 end
 
--- Reads the character bank tabs. Only works while the bank is open, so it runs
--- on BANKFRAME_OPENED and the result is kept in memory.
+-- Reads the bank. Only works while the bank is open, so it runs on
+-- BANKFRAME_OPENED and the result is kept in memory.
+--
+-- Two kinds of bank exist in the client's code, and which one World of Warcraft:
+-- Forever uses is not known until launch (docs/forever-addon-research.md Q2,
+-- launch checklist items 8 and 9):
+--   "tabs"    the character bank tabs, Enum.BagIndex.CharacterBankTab_1..9
+--   "classic" the older bank: the main bank container plus the bank bags
+-- The tabs are tried first. Only when none of them can be read does the classic
+-- bank get a turn. The export says which one it was (bankSource), so the first
+-- real export shows which path ran. Every global and enum below may be missing;
+-- a missing one is skipped, never an error.
 local function ScanBank()
-    if not (Enum and Enum.BagIndex) then
-        return
-    end
     local list, seen = {}, {}
-    local foundTab = false
     local previous = truncated
     truncated = false
-    for tab = 1, 9 do
-        local bag = Enum.BagIndex["CharacterBankTab_" .. tab]
-        if bag ~= nil and ScanContainer(bag, list, seen) then
-            foundTab = true
+
+    local source = nil
+
+    if Enum and Enum.BagIndex then
+        for tab = 1, 9 do
+            local bag = Enum.BagIndex["CharacterBankTab_" .. tab]
+            if bag ~= nil and ScanContainer(bag, list, seen) then
+                source = "tabs"
+            end
         end
     end
+
+    if not source then
+        -- The main bank container: the enum value if there is one, else the global.
+        local main = Enum and Enum.BagIndex and Enum.BagIndex.Bank
+        if main == nil then
+            main = BANK_CONTAINER
+        end
+        if type(main) == "number" and ScanContainer(main, list, seen) then
+            source = "classic"
+        end
+        -- The bank bag slots come right after the player's own bag slots.
+        if type(NUM_BAG_SLOTS) == "number" and type(NUM_BANKBAGSLOTS) == "number" then
+            for bag = NUM_BAG_SLOTS + 1, NUM_BAG_SLOTS + NUM_BANKBAGSLOTS do
+                if ScanContainer(bag, list, seen) then
+                    source = "classic"
+                end
+            end
+        end
+    end
+
     local cut = truncated
     truncated = previous
-    -- Without a single readable tab nothing was seen, so do not claim it.
-    if foundTab then
+    -- If nothing at all was readable, nothing was seen, so do not claim it.
+    if source then
         bankItems = list
         bankSeen = true
+        bankSource = source
         bankTruncated = cut
     end
 end
@@ -213,6 +246,7 @@ local function BuildPayload()
         bags = bags,
         bank = bank,
         bankSeen = bankSeen,
+        bankSource = bankSeen and bankSource or nil, -- left out when the bank was not seen
         truncated = cut or nil, -- true only when a list was cut; nil leaves the key out
         professions = CollectProfessions(),
         completedQuestIds = {}, -- reserved, not filled in this version

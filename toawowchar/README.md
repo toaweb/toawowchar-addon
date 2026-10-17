@@ -1,6 +1,6 @@
 # WowcharExport
 
-A small, free addon for World of Warcraft: Forever. It makes a text string of what your character has (equipped items, bags, the bank if you opened it, professions, and the character's name and region) so you can paste it on the character's BiS page at wowchar, which then ticks off the BiS items you already have.
+A small, free addon for World of Warcraft: Forever. It makes a text string of what your character has (equipped items, bags, the bank if you opened it, professions, and the character's name and region) so you can paste it on the character's BiS page at wowchar, which then marks the BiS items you already have as obtained.
 
 ## What it does and does not do
 
@@ -19,11 +19,15 @@ Copy the `WowcharExport` folder into the Forever client's `Interface/AddOns/` fo
 1. Log in with the character. If you want items in the bank counted, open the bank first (the addon reads it while it is open).
 2. Type `/wowchar`. A window opens with the text selected.
 3. Press Ctrl+C to copy, close the window (Escape or Close; the text box lets go of the keyboard when the window closes).
-4. On that character's BiS page at wowchar, paste the text and import. It only ticks items off; it never un-ticks one.
+4. On that character's BiS page at wowchar, paste the text and import. It only marks items as obtained; it never takes an obtained mark back.
 
 ## What is in the text
 
-Character name, realm, region, class, level, GUID, spec (if the client has one), whether the character is hardcore; the item id and link of each equipped item; the item ids in your bags and, if the bank was opened this session, in the bank; your professions with their skill levels; the addon version and game build; and the time. Each list is cut at 500 items; when that happens the text says so (`truncated`) and the window shows «Some items were left out: a list was longer than 500 items.».
+Character name, realm, region, class, level, GUID, spec (if the client has one), whether the character is hardcore; the item id and link of each equipped item; the item ids in your bags and, if the bank was opened this session, in the bank (`bankSource` says which kind of bank was read: `tabs` for the character bank tabs, `classic` for the older bank with its bank bags; left out when the bank was not opened); your professions with their skill levels; the addon version and game build; and the time. Each list is cut at 500 items; when that happens the text says so (`truncated`) and the window shows «Some items were left out: a list was longer than 500 items.».
+
+## The bank
+
+The addon reads the character bank tabs first. If none of them can be read, it reads the older bank instead (the main bank and the bank bag slots). Which of the two World of Warcraft: Forever uses is not known until launch, so the export records the one that ran in `bankSource`. Either way the bank is only read while it is open.
 
 ## Status
 
