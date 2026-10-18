@@ -1,12 +1,12 @@
 # WowcharExport
 
-A small, free addon for World of Warcraft: Forever. It makes a text string of what your character has (equipped items, bags, the bank if you opened it, professions, and who the character is) so you can paste it at wowchar: on «My characters» to add the character, or on the character's BiS page to mark the BiS items you already have as obtained.
+A small, free addon for World of Warcraft: Forever. It makes a text string of what your character has (equipped items, bags, the bank and the warband bank if you opened the bank, professions, and who the character is) so you can paste it at wowchar: on «My characters» to add the character, or on the character's BiS page to mark the BiS items you already have as obtained.
 
 ## What it does and does not do
 
 - Does something only when you type `/wowchar`. At login it only registers for events.
 - Sends nothing anywhere. An addon cannot reach the internet; you copy the text and paste it yourself.
-- Saves nothing to disk (no SavedVariables). Bank contents are remembered in memory while you are logged in and are forgotten at logout or `/reload`.
+- Saves nothing to disk (no SavedVariables). Bank and warband bank contents are remembered in memory while you are logged in and are forgotten at logout or `/reload`.
 - Writes nothing to the chat window.
 - Plain Lua, no libraries. Free.
 
@@ -16,7 +16,7 @@ Copy the `WowcharExport` folder into the Forever client's `Interface/AddOns/` fo
 
 ## Use
 
-1. Log in with the character. If you want items in the bank counted, open the bank first (the addon reads it while it is open).
+1. Log in with the character. If you want items in the bank and the warband bank counted, open the bank first and leave it open for a moment (the addon reads it while it is open).
 2. Type `/wowchar`. A window opens with the text selected.
 3. Press Ctrl+C to copy, close the window (Escape or Close; the text box lets go of the keyboard when the window closes).
 4. At wowchar, either
@@ -27,12 +27,26 @@ Copy the `WowcharExport` folder into the Forever client's `Interface/AddOns/` fo
 
 ## What is in the text
 
-Character name, realm, class, level, GUID (sent, but wowchar does not store it), spec (if the client has one), whether the character is hardcore; the region: `US`, `KR`, `EU`, `TW` or `CN` when the game reports one of them (`GetCurrentRegion()` 1 to 5), otherwise no region but the number the client reported (`regionId`, for example 110 on the Forever test client) and its `portal` setting (for example `test`), in which case wowchar does not compare regions; the item id and link of each equipped item; the item ids in your bags and, if the bank was opened this session, in the bank (`bankSource` says which kind of bank was read: `tabs` for the character bank tabs, `classic` for the older bank with its bank bags; left out when the bank was not opened); your professions with their skill levels; the addon version and game build; and the time. Each list is cut at 500 items; when that happens the text says so (`truncated`) and the window shows «Some items were left out: a list was longer than 500 items.».
+The text starts with `WOWCHAR:2:` and then plain, readable JSON (format 2). It is not compressed or encoded, so you can read it, and it contains no `|`, which the game would treat as the start of a colour code or link. The addon writes the JSON itself; it needs nothing from the game for that.
+
+- Character name, realm, class, level, GUID (sent, but wowchar does not store it), spec (if the client has one), whether the character is hardcore.
+- The region: `US`, `KR`, `EU`, `TW` or `CN` when the game reports one of them (`GetCurrentRegion()` 1 to 5), otherwise no region but the number the client reported (`regionId`, for example 110 on the Forever test client) and its `portal` setting (for example `test`), in which case wowchar does not compare regions.
+- For each equipped item: the slot, the item id, the enchant id, the gem ids, the suffix id (always a positive number) and the bonus ids. They are read from the item's link by position and the link itself is not sent. wowchar marks BiS items by item id only; it keeps the other numbers with the gear snapshot.
+- The item ids in your bags and, if the bank was read this session, in the bank (`bankSource` says which kind of bank was read: `tabs` for the character bank tabs, `classic` for the older bank with its bank bags; left out when the bank was not read), and in the warband bank (`warbank`, with `warbankSeen`).
+- Your professions with their skill levels, the addon version and game build, and the time.
+
+Each list of item ids is cut at 500 items; when that happens the text says so (`truncated`) and the window shows «Some items were left out: a list was longer than 500 items.».
 
 ## The bank
 
 The addon reads the character bank tabs first. If none of them can be read, it reads the older bank instead (the main bank and the bank bag slots). Which of the two World of Warcraft: Forever uses is not known until launch, so the export records the one that ran in `bankSource`. Either way the bank is only read while it is open.
 
+**The warband bank** is read in the same pass, tab by tab (`AccountBankTab_1`, `_2`, ... up to the first tab the game does not have), into its own list. A tab you have not bought has no slots and gives nothing. If the game has no warband bank, the list is empty and wowchar is told it was not read.
+
+**A scan only counts if the bank is still open at the end.** If you close the bank while the addon is still reading it, the game answers "empty" for the slots it has not read yet, and a partial list would wrongly replace the good one. So the addon checks, at the end of the scan, that the bank has not been closed and that the last slot that held an item still shows an item. If not, the list from the earlier full scan is kept, together with the fact that the bank was seen. The same check is made for the warband bank, separately. A scan that finds no item at all also keeps the earlier list, because there is nothing to check it against; this means that emptying the whole bank is not noticed until something is in it again.
+
+In wowchar, bank items and warband bank items count as obtained only when the export says that bank was read.
+
 ## Status
 
-Version 0.2.0, written before launch and not tested on a real Forever client. The way the text is packed (JSON, compressed, base64) depends on the client's `C_EncodingUtil`, which has to be checked on launch day; the wowchar server and this addon change together if it differs. The text format is described in wowchar's `app/server/utils/addon-export.ts`.
+Version 0.3.0, written before launch and not tested on a real Forever client. Earlier versions (0.1 and 0.2) made format 1 (`WOWCHAR:1:`, compressed and base64), which depended on a game function that was never checked on a real client; wowchar still accepts such a text, but the addon no longer makes it. The text format is described in wowchar's `app/server/utils/addon-export.ts`.
