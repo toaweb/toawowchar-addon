@@ -1,0 +1,36 @@
+-- Runs the addon's item string reader on fixed links and prints one line per
+-- case: <label>\t<json of the result, or null>. Run from the repository root.
+local Env = dofile("app/test/lua/wow-env.lua")
+Env.load()
+local Parse = assert(Env.ns.ParseItemString, "the addon did not export ParseItemString")
+local Serialize = assert(Env.ns.Serialize)
+
+local function show(label, link)
+    local result = Parse(link)
+    print(label .. "\t" .. (result and Serialize(result) or "null"))
+end
+
+-- item:id:enchant:gem1:gem2:gem3:gem4:suffix:unique:level:spec:flags:context:nBonus:bonus...
+show("full", "|cffa335ee|Hitem:12640:2564:213:0:218:0:-9:1234:60:71:0:5:3:1472:6652:7881:1:28:1234|h[Lionheart Helm]|h|r")
+show("negative-suffix", "|Hitem:100:0:0:0:0:0:-65:0:0:0:0:0:0|h[x]|h")
+show("positive-suffix", "|Hitem:100:0:0:0:0:0:65|h[x]|h")
+show("all-gems-zero", "|Hitem:100:0:0:0:0:0:0:0:60:0:0:0:0|h[x]|h")
+show("four-gems", "|Hitem:100:0:1:2:3:4:0|h[x]|h")
+show("bonus-then-modifiers", "|Hitem:100:0:0:0:0:0:0:0:60:0:0:0:3:10:20:30:2:9:60:28:5|h[x]|h")
+show("id-only", "|Hitem:19019|h[Thunderfury]|h")
+show("trailing-colons", "|Hitem:19019::::::::|h[x]|h")
+show("short-before-bonus", "|Hitem:100:5:6:7|h[x]|h")
+show("bonus-count-too-big", "|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:50:11:12|h[x]|h")
+show("bonus-count-zero", "|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:0:99|h[x]|h")
+show("bonus-count-negative", "|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:-2:99|h[x]|h")
+show("bonus-with-zero-and-bad", "|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:4:0:7:-3:8|h[x]|h")
+show("more-than-32-bonus", "|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:40:" .. string.rep("5:", 39) .. "6|h[x]|h")
+show("id-too-big", "|Hitem:99999999999|h[x]|h")
+show("id-zero", "|Hitem:0:1|h[x]|h")
+show("id-minus", "|Hitem:-5|h[x]|h")
+show("name-with-digits-not-read", "|Hitem:100|h[Item:999:888]|h")
+show("no-item", "|Hspell:100|h[x]|h")
+show("not-a-link", "hello")
+show("empty", "")
+show("nil", nil)
+show("number", 5)
