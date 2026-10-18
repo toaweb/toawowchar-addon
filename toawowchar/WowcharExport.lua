@@ -500,9 +500,9 @@ end
 --     payload has none of these).
 --   * Strings are escaped: " and \ get a backslash, line feed, carriage return
 --     and tab are written \n, \r and \t, every other control character (below
---     0x20) and DEL are written as \u00XX, and "|" is written as |. A "|"
+--     0x20) and DEL are written as \u00XX, and "|" is written as \u007c. A "|"
 --     is the start of a colour code or link in the game's text box, so no "|"
---     may reach the copy box; the server reads | as "|" again. Other bytes
+--     may reach the copy box; the server reads \u007c as "|" again. Other bytes
 --     (UTF-8 letters) are written as they are.
 local MAX_DEPTH = 8
 
