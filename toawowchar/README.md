@@ -29,7 +29,8 @@ Copy the `WowcharExport` folder into the Forever client's `Interface/AddOns/` fo
 
 The text starts with `WOWCHAR:2:` and then plain, readable JSON (format 2). It is not compressed or encoded, so you can read it, and it contains no `|`, which the game would treat as the start of a colour code or link. The addon writes the JSON itself; it needs nothing from the game for that.
 
-- Character name, realm, class, level, GUID (sent, but wowchar does not store it), spec (if the client has one), whether the character is hardcore.
+- Character name, realm, class, level, race, faction, GUID (sent, but wowchar does not store it), spec (if the client has one), whether the character is hardcore.
+- The race is the race's file token (`NightElf`, `Scourge`, ...), not the name in your language, and the faction is `Alliance`, `Horde` or `Neutral`. wowchar uses them to show the quests that fit your character. If the game gives no value, the addon leaves that key out and the import works as before.
 - The region: `US`, `KR`, `EU`, `TW` or `CN` when the game reports one of them (`GetCurrentRegion()` 1 to 5), otherwise no region but the number the client reported (`regionId`, for example 110 on the Forever test client) and its `portal` setting (for example `test`), in which case wowchar does not compare regions.
 - For each equipped item: the slot, the item id, the enchant id, the gem ids, the suffix id (always a positive number) and the bonus ids. They are read from the item's link by position and the link itself is not sent. wowchar marks BiS items by item id only; it keeps the other numbers with the gear snapshot.
 - The item ids in your bags and, if the bank was read this session, in the bank (`bankSource` says which kind of bank was read: `tabs` for the character bank tabs, `classic` for the older bank with its bank bags; left out when the bank was not read), and in the warband bank (`warbank`, with `warbankSeen`).
@@ -47,6 +48,10 @@ The addon reads the character bank tabs first. If none of them can be read, it r
 
 In wowchar, bank items and warband bank items count as obtained only when the export says that bank was read.
 
+## What is new
+
+**0.3.1.** The text now also has the character's race (`identity.race`, the race file token from `UnitRace("player")`) and faction (`identity.faction`, from `UnitFactionGroup("player")`). Both are optional: a game that gives nothing leaves the key out, and an older text without them still imports. The format is still `WOWCHAR:2:`. Nothing else changed.
+
 ## Status
 
-Version 0.3.0, written before launch and not tested on a real Forever client. Earlier versions (0.1 and 0.2) made format 1 (`WOWCHAR:1:`, compressed and base64), which depended on a game function that was never checked on a real client; wowchar still accepts such a text, but the addon no longer makes it. The text format is described in wowchar's `app/server/utils/addon-export.ts`.
+Version 0.3.1, written before launch and not tested on a real Forever client. Earlier versions (0.1 and 0.2) made format 1 (`WOWCHAR:1:`, compressed and base64), which depended on a game function that was never checked on a real client; wowchar still accepts such a text, but the addon no longer makes it. The text format is described in wowchar's `app/server/utils/addon-export.ts`.

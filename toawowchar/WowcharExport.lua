@@ -1,4 +1,4 @@
--- WowcharExport 0.3.0
+-- WowcharExport 0.3.1
 --
 -- Type /wowchar to open a window with a text string (equipped items, bags,
 -- the bank and the warband bank if you opened the bank, professions, and who
@@ -21,12 +21,19 @@
 -- identity.portal (the "portal" setting) instead; wowchar then does not compare
 -- regions. GetCurrentRegionName() is not used: it errors on the Forever test
 -- client. Every call below is guarded, so a missing function is never an error.
+--
+-- Race and faction (0.3.1): identity.race is the race file token (the second
+-- return of UnitRace("player"), for example "NightElf" or "Scourge") and
+-- identity.faction is the first return of UnitFactionGroup("player") ("Alliance",
+-- "Horde" or "Neutral"). A value that is not a string leaves its key out. The
+-- server decides what it accepts (addon-export.ts), so the addon does not list
+-- the races: the Forever tokens for the two new races are not confirmed.
 
 -- Tests load this file with a private table as the second argument (the client
 -- passes one too: the addon's own namespace) and read the helpers from it.
 local _, ns = ...
 
-local ADDON_VERSION = "0.3.0"
+local ADDON_VERSION = "0.3.1"
 local FORMAT_VERSION = 2
 local PREFIX = "WOWCHAR:" .. FORMAT_VERSION .. ":"
 
@@ -408,6 +415,30 @@ local function CollectRealm()
     return nil
 end
 
+-- A string from a game function, or nil when the function is missing, raises, or
+-- returns anything but a non-empty string. `index` picks which return value.
+local function StringResult(fn, index)
+    if not fn then
+        return nil
+    end
+    local results = { pcall(fn, "player") }
+    local value = results[index + 1] -- results[1] is pcall's own flag
+    if results[1] and type(value) == "string" and value ~= "" then
+        return value
+    end
+    return nil
+end
+
+-- The race file token ("NightElf"), not the localized name: it does not change
+-- with the client's language.
+local function CollectRace()
+    return StringResult(UnitRace, 2)
+end
+
+local function CollectFaction()
+    return StringResult(UnitFactionGroup, 1)
+end
+
 local function IsHardcore()
     if C_GameRules and C_GameRules.IsHardcoreActive then
         local ok, value = pcall(C_GameRules.IsHardcoreActive)
@@ -461,6 +492,8 @@ local function BuildPayload()
             guid = UnitGUID("player"),
             classFile = classFile,
             classID = classId,
+            race = CollectRace(), -- nil leaves the key out
+            faction = CollectFaction(), -- nil leaves the key out
             level = UnitLevel("player"),
             specID = specId,
             specName = specName,

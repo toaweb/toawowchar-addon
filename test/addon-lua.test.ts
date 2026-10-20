@@ -55,15 +55,15 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
     expect(r.status).toBe(0)
   })
 
-  it('the version is 0.3.0 in the code and in the .toc, and it emits format 2', () => {
+  it('the version is 0.3.1 in the code and in the .toc, and it emits format 2', () => {
     const code = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.lua`, 'utf8')
     const toc = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.toc`, 'utf8')
-    expect(code).toContain('local ADDON_VERSION = "0.3.0"')
+    expect(code).toContain('local ADDON_VERSION = "0.3.1"')
     expect(code).toContain('local FORMAT_VERSION = 2')
-    expect(toc).toMatch(/^## Version: 0\.3\.0$/m)
+    expect(toc).toMatch(/^## Version: 0\.3\.1$/m)
     const json = exportFor('eu')
     expect(json.format).toBe(2)
-    expect(json.addonVersion).toBe('0.3.0')
+    expect(json.addonVersion).toBe('0.3.1')
   })
 
   it('does not use C_EncodingUtil any more (the stub raises if it is touched)', () => {
@@ -93,6 +93,49 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
 
     it('never calls GetCurrentRegionName (the stub raises if it does)', () => {
       expect(identityOf('eu').region).toBe('EU')
+    })
+  })
+
+  describe('race and faction', () => {
+    const identity = (scenario: string) => parseExport(script('race-stub', scenario)[0]!).identity
+    const both = (scenario: string) => {
+      const id = identity(scenario)
+      return { race: id.race, faction: id.faction }
+    }
+
+    it('sends the race file token (the second return of UnitRace) and the faction (the first of UnitFactionGroup)', () => {
+      expect(both('nightelf')).toEqual({ race: 'NightElf', faction: 'Alliance' })
+      expect(both('scourge')).toEqual({ race: 'Scourge', faction: 'Horde' })
+      expect(both('neutral')).toEqual({ race: 'Pandaren', faction: 'Neutral' })
+    })
+
+    it('sends a token it does not know as it is; the server decides', () => {
+      expect(both('unknown-token')).toEqual({ race: 'HighOrderSkyborne', faction: 'Alliance' })
+    })
+
+    it('the format stays 2, the other identity keys are as before, and the server decodes it', () => {
+      const j = parseExport(script('race-stub', 'nightelf')[0]!)
+      expect(j.format).toBe(2)
+      expect(Object.keys(j.identity).sort()).toEqual(
+        ['classFile', 'classID', 'faction', 'guid', 'hardcore', 'level', 'name', 'race', 'realm', 'region'].sort(),
+      )
+      const p = decodeAddonExport(`${PREFIX}${JSON.stringify(j)}`)
+      expect(p.identity).toMatchObject({ race: 'NightElf', faction: 'Alliance' })
+    })
+
+    it.each(['nil-returns', 'missing', 'erroring', 'wrongtypes', 'empty', 'name-only'])(
+      'scenario %s (nil, a missing or raising function, a non-string, an empty string) leaves both keys out', (scenario) => {
+        const j = parseExport(script('race-stub', scenario)[0]!)
+        expect(j.format).toBe(2)
+        expect(j.identity).not.toHaveProperty('race')
+        expect(j.identity).not.toHaveProperty('faction')
+        expect(j.identity.name).toBe('Thor')
+        expect(decodeAddonExport(`${PREFIX}${JSON.stringify(j)}`).identity.race).toBeUndefined()
+      })
+
+    it('one that fails does not take the other with it', () => {
+      expect(identity('partial')).toMatchObject({ race: 'NightElf' })
+      expect(identity('partial')).not.toHaveProperty('faction')
     })
   })
 
@@ -223,7 +266,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
     it('decodes on the server (the real serializer against the real decoder)', () => {
       const p = decodeAddonExport(line)
       expect(p.format).toBe(2)
-      expect(p.identity).toEqual({ name: 'Thorin', region: 'EU', realm: 'Argent Dawn', classFile: 'WARRIOR', classID: 1, level: 60, specName: 'Arms' })
+      expect(p.identity).toEqual({ name: 'Thorin', region: 'EU', realm: 'Argent Dawn', classFile: 'WARRIOR', classID: 1, race: 'Dwarf', faction: 'Alliance', level: 60, specName: 'Arms' })
       expect(p.equipped).toEqual([
         { slot: 1, itemId: 12640, enchantId: 2564, suffixId: 9, gemIds: [213, 218], bonusIds: [1472, 6652, 7881] },
         { slot: 2, itemId: 18404, enchantId: 0, suffixId: 0, gemIds: [], bonusIds: [] },

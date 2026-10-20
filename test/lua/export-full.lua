@@ -7,6 +7,8 @@ local Env = dofile("app/test/lua/wow-env.lua")
 
 GetRealmName = function() return "Argent Dawn" end
 UnitName = function() return "Thorin" end
+UnitRace = function() return "Dwarf", "Dwarf", 3 end
+UnitFactionGroup = function() return "Alliance", "Alliance" end
 
 local links = {
     [1] = "|cffa335ee|Hitem:12640:2564:213:0:218:0:-9:1234:60:71:0:5:3:1472:6652:7881:1:28:1234|h[Lionheart Helm]|h|r",
