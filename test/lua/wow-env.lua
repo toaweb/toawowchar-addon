@@ -43,6 +43,8 @@ time = function() return 1792000000 end
 -- Identity and client, the same in every scenario unless a script changes them.
 UnitName = function() return "Thor" end
 UnitClass = function() return "Warrior", "WARRIOR", 1 end
+UnitRace = function() return "Night Elf", "NightElf", 4 end
+UnitFactionGroup = function() return "Alliance", "Alliance" end
 UnitLevel = function() return 60 end
 UnitGUID = function() return "Player-0000-00000001" end
 GetBuildInfo = function() return "1.60.1", "70450", "Jan 1 2026", 16001 end
