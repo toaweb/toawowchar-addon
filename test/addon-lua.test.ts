@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { ADDON_VERSION } from '../shared/addon-release'
 import { MAX_BONUS_IDS_PER_ITEM, MAX_IDS_PER_ARRAY, decodeAddonExport, obtainedItemIds } from '../server/utils/addon-export'
 
 // The addon's Lua, checked with Lua 5.1 in Docker (the WoW client's Lua). Opt-in
@@ -55,15 +56,15 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
     expect(r.status).toBe(0)
   })
 
-  it('the version is 0.3.1 in the code and in the .toc, and it emits format 2', () => {
+  it('the version is the shared constant in the code and in the .toc, and it emits format 2', () => {
     const code = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.lua`, 'utf8')
     const toc = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.toc`, 'utf8')
-    expect(code).toContain('local ADDON_VERSION = "0.3.1"')
+    expect(code).toContain(`local ADDON_VERSION = "${ADDON_VERSION}"`)
     expect(code).toContain('local FORMAT_VERSION = 2')
-    expect(toc).toMatch(/^## Version: 0\.3\.1$/m)
+    expect(toc).toMatch(new RegExp(`^## Version: ${ADDON_VERSION.replace(/\./g, '\\.')}$`, 'm'))
     const json = exportFor('eu')
     expect(json.format).toBe(2)
-    expect(json.addonVersion).toBe('0.3.1')
+    expect(json.addonVersion).toBe(ADDON_VERSION)
   })
 
   it('does not use C_EncodingUtil any more (the stub raises if it is touched)', () => {
