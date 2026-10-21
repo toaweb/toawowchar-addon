@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ADDON_VERSION } from '../shared/addon-release'
 import { MAX_ENCODED_LENGTH } from '../shared/addon-export-format'
-import { MISSING_REASONS, SECTION_NAMES } from '../shared/addon-sections'
+import { ADDON_CACHED_SECTIONS, MISSING_REASONS, SECTION_NAMES } from '../shared/addon-sections'
 import { ADDON_BOUNDS, ADDON_LIST_CAPS, MAX_BONUS_IDS_PER_ITEM, MAX_IDS_PER_ARRAY, decodeAddonExport, obtainedItemIds } from '../server/utils/addon-export'
 import { ADDON_BODY_MAX } from '../server/utils/request-body'
 import type { AddonExport } from '../server/utils/addon-export'
@@ -992,12 +992,17 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
 
   describe('the snapshot: the cache kept current by game events', () => {
     // counts are [equipped, bags, quests, professions, player]: how many times each part was read from the game
-    it('each event refreshes its own parts: equipment changed -> equipped; bag update -> bags; quest turned in -> completed quests and the player; skill lines -> professions; level up -> player', () => {
+    it('each event refreshes its own parts: equipment changed -> equipped; bag update -> bags; quest turned in -> completed quests and the player; skill lines -> professions; gold and XP -> player; level up -> player (one second later)', () => {
       const m = snap('events')
       expect(json(m, 'PLAYER_EQUIPMENT_CHANGED')).toEqual([1, 0, 0, 0, 0])
       expect(json(m, 'BAG_UPDATE_DELAYED')).toEqual([0, 1, 0, 0, 0])
       expect(json(m, 'QUEST_TURNED_IN')).toEqual([0, 0, 1, 0, 1])
       expect(json(m, 'SKILL_LINES_CHANGED')).toEqual([0, 0, 0, 1, 0])
+      expect(json(m, 'PLAYER_MONEY')).toEqual([0, 0, 0, 0, 1])
+      expect(json(m, 'PLAYER_XP_UPDATE')).toEqual([0, 0, 0, 0, 1])
+      // the level-up is not read when the event fires but one second later
+      expect(json(m, 'level-up-at-once')).toEqual([0, 0, 0, 0, 0])
+      expect(json(m, 'level-up-delays')).toEqual([1])
       expect(json(m, 'PLAYER_LEVEL_UP')).toEqual([0, 0, 0, 0, 1])
       expect(json(m, 'timers')).toEqual([0]) // the first event of each part is not delayed
     })
@@ -1014,7 +1019,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
         { name: 'Tailoring', skillLineId: 197, rank: 225, maxRank: 300 },
         { name: 'First Aid', skillLineId: 129, rank: 100, maxRank: 150 },
       ])
-      expect(cache.player).toEqual({ at: 1792000500, money: 123456789, level: 60, xp: 1000, xpMax: 5000, rested: 0 })
+      expect(cache.player).toEqual({ at: 1792000700, money: 123456789, level: 60, xp: 1000, xpMax: 5000, rested: 0 })
     })
 
     it('says nothing in the chat window', () => {
@@ -1024,9 +1029,9 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       expect(plain(snap('quest-turned-in'), 'chat')).toEqual([])
     })
 
-    it('registers the five events', () => {
+    it('registers the seven events', () => {
       const code = codeOf()
-      for (const event of ['PLAYER_EQUIPMENT_CHANGED', 'BAG_UPDATE_DELAYED', 'QUEST_TURNED_IN', 'SKILL_LINES_CHANGED', 'PLAYER_LEVEL_UP']) {
+      for (const event of ['PLAYER_EQUIPMENT_CHANGED', 'BAG_UPDATE_DELAYED', 'QUEST_TURNED_IN', 'SKILL_LINES_CHANGED', 'PLAYER_LEVEL_UP', 'PLAYER_MONEY', 'PLAYER_XP_UPDATE']) {
         expect(code, event).toMatch(new RegExp(`"${event}",`))
       }
       // the snapshot itself never calls Say()
@@ -1068,6 +1073,73 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       })
     })
 
+    describe('gold and XP (PLAYER_MONEY, PLAYER_XP_UPDATE): the player part, the same throttle, no chat', () => {
+      let m: Map<string, string>
+      beforeAll(() => { m = snap('player-events') })
+
+      it('the first event reads once, at once', () => {
+        expect(json(m, 'first')).toEqual([1, 0]) // [reads, timers]
+      })
+
+      it('a burst of money and XP events inside the interval reads nothing and shares ONE timer for the rest of it (4 s after 1 s)', () => {
+        expect(json(m, 'burst')).toEqual([1, 1, 4]) // [reads, timers, delay]
+        expect(json(m, 'before-timer')).toEqual([123456789, 1000]) // the cache still has the first read
+      })
+
+      it('the one trailing rebuild keeps the last value', () => {
+        expect(json(m, 'trailing')).toEqual([1, 0, 5555, 4444]) // [reads, timers, money, xp]
+      })
+
+      it('says nothing in the chat window', () => {
+        expect(plain(m, 'chat')).toEqual([])
+      })
+
+      it('in combat nothing is read and nothing is scheduled; PLAYER_REGEN_ENABLED rebuilds once', () => {
+        const c = snap('player-combat')
+        expect(json(c, 'in-combat')).toEqual([0, 0, 0]) // [reads, timers, a cache record with a player part]
+        expect(json(c, 'after-combat')).toEqual([1, 0, 777]) // [reads, timers, money]
+        expect(json(c, 'again')).toEqual([1])
+        expect(plain(c, 'chat')).toEqual([])
+      })
+    })
+
+    describe('a level-up is read one second after the event (some clients still answer the old level)', () => {
+      it('the stub answers the old level and XP max when the event fires and the new ones one tick later: the cache has the new ones', () => {
+        const m = snap('level-up')
+        expect(json(m, 'at-once')).toEqual([0, 0, 1, 1]) // [reads, cache record, delay, timers]: nothing read when the event fires
+        expect(json(m, 'after-one-tick')).toEqual([1, 60, 6000, 12]) // [reads, level, xpMax, xp]
+        expect(plain(m, 'chat')).toEqual([])
+      })
+
+      it('the delayed read goes through the throttle: a rebuild a second ago makes it wait for the rest of the interval', () => {
+        const m = snap('level-up-throttled')
+        expect(json(m, 'waiting')).toEqual([1, 1, 4, 59]) // [reads, timers, delay, level still in the cache]
+        expect(json(m, 'trailing')).toEqual([2, 0, 60])
+      })
+
+      it('in combat nothing is read; one rebuild follows PLAYER_REGEN_ENABLED', () => {
+        const m = snap('level-up-combat')
+        expect(json(m, 'in-combat')).toEqual([0, 0, 0])
+        expect(json(m, 'after-combat')).toEqual([1, 0, 61])
+      })
+
+      it('/wowchar reset between the event and the read: the read does nothing', () => {
+        const m = snap('level-up-reset')
+        expect(json(m, 'record')).toEqual([0])
+        expect(json(m, 'reads')).toEqual([0])
+      })
+
+      it('a client without C_Timer reads at once and raises nothing', () => {
+        expect(json(snap('level-up-no-timer'), 'reads')).toEqual([1, 61])
+      })
+
+      it('the delay is one constant, 1 second, and the event handler goes through Snapshot.LevelUp', () => {
+        const code = codeOf()
+        expect(code).toMatch(/^local LEVEL_UP_DELAY = 1$/m)
+        expect(code).toMatch(/event == "PLAYER_LEVEL_UP" then\n\s+Snapshot\.LevelUp\(\)/)
+      })
+    })
+
     describe('combat', () => {
       let m: Map<string, string>
       beforeAll(() => { m = snap('combat') })
@@ -1076,7 +1148,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
         expect(json(m, 'in-combat')).toEqual([[0, 0, 0, 0, 0], 0])
       })
 
-      it('when combat ends every part that was held back is rebuilt ONCE (the player part had two events)', () => {
+      it('when combat ends every part that was held back is rebuilt ONCE (the player part had nine)', () => {
         expect(json(m, 'after-combat')).toEqual([[1, 1, 1, 1, 1], 0])
         expect(json(m, 'again')).toEqual([[1, 1, 1, 1, 1]])
       })
@@ -1089,6 +1161,23 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       it('PLAYER_REGEN_ENABLED still opens the window that /wowchar asked for in combat (the existing behaviour)', () => {
         expect(codeOf()).toMatch(/Snapshot\.CombatEnded\(\)\n\s+if session\.pendingOpen then/)
       })
+    })
+
+    it('ADDON_CACHED_SECTIONS is exactly what the addon writes into toawowcharDB (the page lists it)', () => {
+      // saved record field -> section name (the two that are named differently in the export)
+      const section: Record<string, string> = { flights: 'flightPaths', quests: 'questsDone' }
+      const keys = json(snap('cached-keys'), 'keys') as string[]
+      const written = keys.filter(k => k !== 'v').map(k => section[k] ?? k)
+      expect([...written].sort()).toEqual([...ADDON_CACHED_SECTIONS].sort())
+      // pure and well formed: every entry is a section of the export, once, in the export's order
+      expect(new Set(ADDON_CACHED_SECTIONS).size).toBe(ADDON_CACHED_SECTIONS.length)
+      expect(ADDON_CACHED_SECTIONS.map(n => SECTION_NAMES.indexOf(n))).toEqual(
+        ADDON_CACHED_SECTIONS.map(n => SECTION_NAMES.indexOf(n)).sort((a, b) => a - b))
+      for (const name of ADDON_CACHED_SECTIONS) expect(SECTION_NAMES, name).toContain(name)
+      // the quest log, reputation, talents, honor and class spells are never stored
+      for (const name of ['questLog', 'reputation', 'talents', 'honor', 'classSpells']) {
+        expect(ADDON_CACHED_SECTIONS as readonly string[], name).not.toContain(name)
+      }
     })
 
     it('a turned-in quest id goes into the cache at once, but only when the list was read before (one id must not look like a complete list); bad ids are ignored', () => {

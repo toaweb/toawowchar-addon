@@ -1969,7 +1969,18 @@ end
 --   BAG_UPDATE_DELAYED        bags (the bank is scanned as before while it is open)
 --   QUEST_TURNED_IN           quests (the turned-in id is added at once) and player
 --   SKILL_LINES_CHANGED       professions
---   PLAYER_LEVEL_UP           player
+--   PLAYER_MONEY              player (gold)
+--   PLAYER_XP_UPDATE          player (XP)
+--   PLAYER_LEVEL_UP           player, read LEVEL_UP_DELAY seconds after the event:
+--                             some clients still answer the old level and XP max
+--                             while the event fires (Snapshot.LevelUp)
+-- The cache also keeps the bank, the warband bank, the recipes, the flight paths and
+-- Legacy (written by their own captures, with a chat line); the whole list is
+-- ADDON_CACHED_SECTIONS in app/shared/addon-sections.ts, and a Lua test pins it to
+-- the sections this file writes into toawowcharDB.
+-- `equipped` and `bags` are kept but the export does not read them back yet: a
+-- /wowchar always reads both live (docs/addon-export-format-3.md). They are not dead
+-- data: they stay for a later phase and for the page's list of what the addon keeps.
 -- At most one rebuild of a section per SNAPSHOT_INTERVAL seconds: the first event
 -- rebuilds at once, the ones that follow inside the interval share ONE rebuild
 -- when the interval is over (so the last change is never lost). In combat nothing
@@ -1978,6 +1989,9 @@ end
 
 -- Seconds between two rebuilds of one section.
 local SNAPSHOT_INTERVAL = 5
+
+-- Seconds after PLAYER_LEVEL_UP before the player part is read.
+local LEVEL_UP_DELAY = 1
 
 -- The order the deferred sections are rebuilt in when combat ends.
 local SNAPSHOT_SECTIONS = { "equipped", "bags", "quests", "professions", "player" }
@@ -2096,6 +2110,22 @@ function Snapshot.CombatEnded()
             Snapshot.Request(section)
         end
     end
+end
+
+-- A level-up: the player part is read LEVEL_UP_DELAY seconds later, through
+-- Snapshot.Request, so the throttle and the combat rule still hold. A reset in
+-- between cancels it. A client without C_Timer reads at once.
+function Snapshot.LevelUp()
+    if C_Timer and C_Timer.After then
+        local generation = snapshotGeneration
+        C_Timer.After(LEVEL_UP_DELAY, function()
+            if generation == snapshotGeneration then
+                Snapshot.Request("player")
+            end
+        end)
+        return
+    end
+    Snapshot.Request("player")
 end
 
 -- A quest was turned in: its id goes into the completed quests at once (the game's
@@ -2907,8 +2937,10 @@ events:SetScript("OnEvent", function(_, event, arg1)
         Snapshot.Request("player") -- the reward: XP and money
     elseif event == "SKILL_LINES_CHANGED" then
         Snapshot.Request("professions")
-    elseif event == "PLAYER_LEVEL_UP" then
+    elseif event == "PLAYER_MONEY" or event == "PLAYER_XP_UPDATE" then
         Snapshot.Request("player")
+    elseif event == "PLAYER_LEVEL_UP" then
+        Snapshot.LevelUp()
     elseif event == "TRADE_SKILL_LIST_UPDATE" or event == "TRADE_SKILL_DATA_SOURCE_CHANGED" then
         Capture.ScheduleRecipes()
     elseif event == "TAXIMAP_OPENED" then
@@ -2935,6 +2967,7 @@ for _, event in ipairs({
     "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED",
     "TAXIMAP_OPENED", "TAXIMAP_CLOSED", "TAXI_NODE_STATUS_CHANGED", "PLAYER_REGEN_ENABLED",
     "PLAYER_EQUIPMENT_CHANGED", "QUEST_TURNED_IN", "SKILL_LINES_CHANGED", "PLAYER_LEVEL_UP",
+    "PLAYER_MONEY", "PLAYER_XP_UPDATE",
 }) do
     pcall(events.RegisterEvent, events, event)
 end

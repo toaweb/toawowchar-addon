@@ -125,7 +125,8 @@ local function relog()
     g.player.level = 61
     g.player.money = 123999999
     Env.fire("PLAYER_LEVEL_UP", 61)
-    Env.flushTimers()
+    Env.flushTimers()                    -- one second later: the read asks for a rebuild, the quest's was just now
+    Env.flushTimers()                    -- the rest of the interval is over: the rebuild
     local chat1 = Env.chat
     local rec = record()
     local snapshot = { equipped = #rec.equipped.items, bags = rec.bags.ids, quests = rec.quests.ids, professions = #rec.professions.list, level = rec.player.level }
@@ -173,11 +174,17 @@ elseif scenario == "events" then
     local g = game()
     Env.useTimers()
     Env.load()
-    local order = { "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "QUEST_TURNED_IN", "SKILL_LINES_CHANGED", "PLAYER_LEVEL_UP" }
+    local order = { "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "QUEST_TURNED_IN", "SKILL_LINES_CHANGED", "PLAYER_MONEY", "PLAYER_XP_UPDATE", "PLAYER_LEVEL_UP" }
     for i, event in ipairs(order) do
         Env.now = T + i * 100 -- far apart: the throttle is not in play
         resetReads()
         Env.fire(event, 1)
+        if event == "PLAYER_LEVEL_UP" then
+            -- read one second later, not when the event fires
+            emit("level-up-at-once", counts())
+            emit("level-up-delays", Env.timerDelays)
+            Env.flushTimers()
+        end
         emit(event, counts())
     end
     emit("timers", { #Env.timers })
@@ -233,9 +240,9 @@ elseif scenario == "clock-back" then
     Env.useTimers()
     Env.load()
     Env.now = T + 1000
-    Env.fire("PLAYER_LEVEL_UP")
+    Env.fire("PLAYER_MONEY")
     Env.now = T
-    Env.fire("PLAYER_LEVEL_UP")
+    Env.fire("PLAYER_MONEY")
     emit("delay", { Env.timerDelays[1] })
 
 elseif scenario == "combat" then
@@ -249,7 +256,8 @@ elseif scenario == "combat" then
         Env.fire("BAG_UPDATE_DELAYED")
         Env.fire("QUEST_TURNED_IN", 1001)
         Env.fire("SKILL_LINES_CHANGED")
-        Env.fire("PLAYER_LEVEL_UP")
+        Env.fire("PLAYER_MONEY")
+        Env.fire("PLAYER_XP_UPDATE")
     end
     emit("in-combat", { counts(), #Env.timers })
     -- combat ends: every section is rebuilt once
@@ -264,9 +272,9 @@ elseif scenario == "combat" then
     -- a rebuild scheduled before combat that fires in combat waits as well
     resetReads()
     Env.now = T + 100
-    Env.fire("PLAYER_LEVEL_UP")      -- at once
+    Env.fire("PLAYER_MONEY")         -- at once
     Env.now = T + 101
-    Env.fire("PLAYER_LEVEL_UP")      -- scheduled
+    Env.fire("PLAYER_XP_UPDATE")     -- scheduled
     Env.combat = true
     Env.flushTimers()
     emit("timer-in-combat", { counts(), #Env.timers })
@@ -342,12 +350,141 @@ elseif scenario == "hidden" then
     Env.useTimers()
     Env.load()
     Env.now = T
-    Env.fire("PLAYER_LEVEL_UP")
+    Env.fire("PLAYER_MONEY")
     emit("first", { record().player.money })
     hidden[g.player.money] = true
     Env.now = T + 100
-    Env.fire("PLAYER_LEVEL_UP")
+    Env.fire("PLAYER_MONEY")
     emit("hidden", { record().player.money, record().player.at })
+
+elseif scenario == "player-events" then
+    -- Gold and XP events: the same 5-second throttle as every part, no chat.
+    local g = game()
+    Env.useTimers()
+    Env.load()
+    Env.now = T
+    Env.fire("PLAYER_MONEY")
+    emit("first", { reads.player, #Env.timers })
+    -- a burst of money and XP events in the next four seconds: no read, ONE timer for the rest of the interval
+    for i = 1, 4 do
+        Env.now = T + i
+        g.player.money = 1000 + i
+        g.player.xp = 2000 + i
+        Env.fire(i % 2 == 0 and "PLAYER_MONEY" or "PLAYER_XP_UPDATE", "player")
+    end
+    emit("burst", { reads.player, #Env.timers, Env.timerDelays[1] })
+    -- the last value of the burst is not in the cache yet ...
+    emit("before-timer", { record().player.money, record().player.xp })
+    -- ... and the one trailing rebuild brings it
+    g.player.money = 5555
+    g.player.xp = 4444
+    resetReads()
+    Env.now = T + 5
+    Env.flushTimers()
+    emit("trailing", { reads.player, #Env.timers, record().player.money, record().player.xp })
+    emit("chat", Env.chat)
+
+elseif scenario == "player-combat" then
+    -- In combat nothing is read and nothing is scheduled; PLAYER_REGEN_ENABLED rebuilds once.
+    local g = game()
+    Env.useTimers()
+    Env.load()
+    Env.now = T
+    Env.combat = true
+    for _ = 1, 3 do
+        Env.fire("PLAYER_MONEY")
+        Env.fire("PLAYER_XP_UPDATE", "player")
+    end
+    emit("in-combat", { reads.player, #Env.timers, record() and record().player and 1 or 0 })
+    g.player.money = 777
+    Env.combat = false
+    Env.now = T + 60
+    Env.fire("PLAYER_REGEN_ENABLED")
+    emit("after-combat", { reads.player, #Env.timers, record().player.money })
+    Env.fire("PLAYER_REGEN_ENABLED")
+    emit("again", { reads.player })
+    emit("chat", Env.chat)
+
+elseif scenario == "level-up" then
+    -- The client still answers the old level and XP max when PLAYER_LEVEL_UP fires; they
+    -- change one tick later. The stub's answers change when the timer runs.
+    local g = game()
+    Env.useTimers()
+    Env.load()
+    Env.now = T
+    g.player.level = 59
+    g.player.xpMax = 5000
+    Env.fire("PLAYER_LEVEL_UP", 60)
+    emit("at-once", { reads.player, record() and record().player and 1 or 0, Env.timerDelays[1], #Env.timers })
+    g.player.level = 60
+    g.player.xpMax = 6000
+    g.player.xp = 12
+    Env.flushTimers()
+    local p = record().player
+    emit("after-one-tick", { reads.player, p.level, p.xpMax, p.xp })
+    emit("chat", Env.chat)
+
+elseif scenario == "level-up-throttled" then
+    -- The delayed read goes through the throttle: a rebuild a moment ago makes it wait for the rest of the interval.
+    local g = game()
+    Env.useTimers()
+    Env.load()
+    Env.now = T
+    g.player.level = 59
+    Env.fire("PLAYER_XP_UPDATE")          -- the kill: read at once, still level 59
+    Env.now = T + 1
+    g.player.level = 60
+    Env.fire("PLAYER_LEVEL_UP", 60)
+    Env.flushTimers()                     -- 1 s later: inside the interval, so it schedules the rest (4 s)
+    emit("waiting", { reads.player, #Env.timers, Env.timerDelays[1], record().player.level })
+    Env.now = T + 5
+    Env.flushTimers()
+    emit("trailing", { reads.player, #Env.timers, record().player.level })
+
+elseif scenario == "level-up-combat" then
+    -- A level-up in combat: nothing is read, and one rebuild follows PLAYER_REGEN_ENABLED.
+    local g = game()
+    Env.useTimers()
+    Env.load()
+    Env.now = T
+    Env.combat = true
+    g.player.level = 61
+    Env.fire("PLAYER_LEVEL_UP", 61)
+    Env.flushTimers()
+    emit("in-combat", { reads.player, #Env.timers, record() and record().player and 1 or 0 })
+    Env.combat = false
+    Env.now = T + 10
+    Env.fire("PLAYER_REGEN_ENABLED")
+    emit("after-combat", { reads.player, #Env.timers, record().player.level })
+
+elseif scenario == "level-up-reset" then
+    -- /wowchar reset between the event and the read: the read does nothing.
+    local g = game()
+    Env.useTimers()
+    Env.load()
+    Env.now = T
+    Env.fire("PLAYER_LEVEL_UP", 61)
+    assert(Env.slash("/toawowchar reset"))
+    Env.flushTimers()
+    emit("record", { record() and 1 or 0 })
+    emit("reads", { reads.player })
+
+elseif scenario == "level-up-no-timer" then
+    -- A client without C_Timer: the player part is read at once.
+    local g = game()
+    Env.load()
+    Env.now = T
+    g.player.level = 61
+    Env.fire("PLAYER_LEVEL_UP", 61)
+    emit("reads", { reads.player, record().player.level })
+
+-- What the saved record holds after everything the addon can capture: the keys, for the pin against ADDON_CACHED_SECTIONS.
+elseif scenario == "cached-keys" then
+    local r = relog()
+    local keys = {}
+    for key in pairs(record()) do keys[#keys + 1] = key end
+    table.sort(keys)
+    emit("keys", keys)
 
 elseif scenario == "damaged" then
     -- The four new parts of a damaged record are rebuilt field by field.

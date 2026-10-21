@@ -4,7 +4,7 @@ A small, free addon for World of Warcraft: Forever. It makes a text string of wh
 
 ## What it does and does not do
 
-- Makes the text when you type `/wowchar` (or `/toawowchar`, the same command). Between those moments it only listens for events: it quietly remembers the bank while you have it open, the recipes of a profession while its window is open, and the flight paths while a flight map is open, and it keeps a current copy of your equipped items, bags, completed quests, professions and gold, level and XP (see “The snapshot”).
+- Makes the text when you type `/wowchar` (or `/toawowchar`, the same command). Between those moments it only listens for events: it remembers the bank while you have it open, the recipes of a profession while its window is open and the flight paths while a flight map is open (each of those says so in one short chat line), and it quietly keeps a current copy of your equipped items, bags, completed quests, professions and gold, level and XP (see “The snapshot”).
 - Sends nothing anywhere. An addon cannot reach the internet; you copy the text and paste it yourself.
 - Saves a **cache** to disk (SavedVariables `toawowcharDB`): what the game lets an addon read only while a window is open, plus the completed quests, Legacy and the snapshot. It is a cache: the addon works exactly the same when nothing was saved, or when the game does not keep the file (it is not known whether the Forever beta does). See «The cache».
 - Says one short line in the chat window when it has cached something new («toawowchar: saved 212 Tailoring recipes.»), one when you type `/wowchar` in combat, and one for `/wowchar reset`. Nothing else.
@@ -103,7 +103,7 @@ SavedVariables `toawowcharDB[realm][name]` holds, for each character:
 
 ## The snapshot
 
-Game events keep a copy of five parts of the character in the cache, so SavedVariables holds a current copy when you log out, whether or not you typed `/wowchar`:
+Seven game events keep a copy of five parts of the character in the cache, so SavedVariables holds a current copy when you log out, whether or not you typed `/wowchar`:
 
 | Event | Refreshes |
 |---|---|
@@ -111,10 +111,12 @@ Game events keep a copy of five parts of the character in the cache, so SavedVar
 | `BAG_UPDATE_DELAYED` | the bags (the bank is scanned as before while it is open) |
 | `QUEST_TURNED_IN` | the completed quests (the turned-in quest at once) and gold, level and XP |
 | `SKILL_LINES_CHANGED` | the professions |
-| `PLAYER_LEVEL_UP` | gold, level and XP |
+| `PLAYER_MONEY` | gold, level and XP (the whole player part is read again) |
+| `PLAYER_XP_UPDATE` | gold, level and XP |
+| `PLAYER_LEVEL_UP` | gold, level and XP, read **one second after** the event: some game clients still answer the old level and XP maximum while the event fires |
 
 - **Throttled.** At most one rebuild of a part every 5 seconds. The first event rebuilds at once; the ones that follow share one rebuild when the 5 seconds are over, so the last change is never lost.
-- **Not in combat.** Nothing is read in combat; the parts that changed are rebuilt once when combat ends.
+- **Not in combat.** Nothing is read in combat; the parts that changed are rebuilt once when combat ends. A level-up in combat is read when combat ends.
 - **Silent.** No chat line.
 - Typing `/wowchar` also refreshes the copy. The equipped items and the bags are always read from the game for the text; the professions and gold/level/XP are taken from the copy (`cache`, with its time) only when the game gives nothing at that moment.
 
@@ -130,7 +132,7 @@ In wowchar, bank items and warband bank items count as obtained only when the te
 
 ## What is new
 
-**0.4.0.** The addon is renamed **toawowchar** (folder, TOC, SavedVariables `toawowcharDB`; no data is taken over from `WowcharExportDB`), and `/toawowchar` works like `/wowchar`. A snapshot of the equipped items, bags, completed quests, professions and gold/level/XP is kept current by game events. Format 3 (`WOWCHAR:3:`): completed quests, the quest log, recipes with reagents, reputation, money and XP, talents, Legacy, flight paths, the season's PvP rank and class spells, each with its source (live, cache or missing with a reason). A SavedVariables cache of the bank, recipes, flight paths, Legacy and completed quests, and `/wowchar reset`. A new window with a checklist. The addon now says one short line when it caches something. wowchar still reads formats 2 and 1.
+**0.4.0.** The addon is renamed **toawowchar** (folder, TOC, SavedVariables `toawowcharDB`; no data is taken over from `WowcharExportDB`), and `/toawowchar` works like `/wowchar`. A snapshot of the equipped items, bags, completed quests, professions and gold/level/XP is kept current by seven game events (the level one second after a level-up). Format 3 (`WOWCHAR:3:`): completed quests, the quest log, recipes with reagents, reputation, money and XP, talents, Legacy, flight paths, the season's PvP rank and class spells, each with its source (live, cache or missing with a reason). A SavedVariables cache of the bank, recipes, flight paths, Legacy and completed quests, and `/wowchar reset`. A new window with a checklist. The addon now says one short line when it caches something. wowchar still reads formats 2 and 1.
 
 **0.3.1.** The text also has the character's race and faction. Nothing else changed.
 
