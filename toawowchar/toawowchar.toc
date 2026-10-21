@@ -1,7 +1,7 @@
 ## Interface: 16001
-## Title: Wowchar Export
+## Title: toawowchar
 ## Notes: Type /wowchar to get a text you can paste at wowchar (My characters, or a character's BiS page). Sends nothing anywhere.
-## SavedVariables: WowcharExportDB
+## SavedVariables: toawowcharDB
 ## Version: 0.4.0
 ## Author: toaweb
-WowcharExport.lua
+toawowchar.lua

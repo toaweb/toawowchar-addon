@@ -53,16 +53,16 @@ const identityOf = (scenario: string) => {
 /** `label\tjson` lines to a map of label to the raw json (or 'ERROR'). */
 const labelled = (lines: string[]) => new Map(lines.map(l => l.split('\t') as [string, string]))
 
-describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
+describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   it('compiles (luac -p)', () => {
-    const r = lua(['luac', '-p', 'addon/WowcharExport/WowcharExport.lua'])
+    const r = lua(['luac', '-p', 'addon/toawowchar/toawowchar.lua'])
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
   })
 
   it('the version is the shared constant in the code and in the .toc, and it emits format 3', () => {
-    const code = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.lua`, 'utf8')
-    const toc = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.toc`, 'utf8')
+    const code = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
+    const toc = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.toc`, 'utf8')
     expect(code).toContain(`local ADDON_VERSION = "${ADDON_VERSION}"`)
     expect(code).toContain('local FORMAT_VERSION = 3')
     expect(toc).toMatch(new RegExp(`^## Version: ${ADDON_VERSION.replace(/\./g, '\\.')}$`, 'm'))
@@ -72,7 +72,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
   })
 
   it('does not use C_EncodingUtil any more (the stub raises if it is touched)', () => {
-    const code = readFileSync(`${ROOT}/addon/WowcharExport/WowcharExport.lua`, 'utf8')
+    const code = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
       .split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
     expect(code).not.toMatch(/C_EncodingUtil|CompressString|EncodeBase64|SerializeJSON/)
     expect(exportFor('eu').identity.name).toBe('Thor')
@@ -628,7 +628,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
     })
 
     it('says one short line for each thing it cached, and nothing else', () => {
-      expect(plain(m, 'chat')).toEqual(['wowchar: saved 3 Tailoring recipes.', 'wowchar: saved 3 flight paths.'])
+      expect(plain(m, 'chat')).toEqual(['toawowchar: saved 3 Tailoring recipes.', 'toawowchar: saved 3 flight paths.'])
     })
   })
 
@@ -710,7 +710,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
 
     it('are read while the bank is open and say so once, when it closes', () => {
       expect(plain(m, 'chat-open')).toEqual([])
-      expect(plain(m, 'chat-closed')).toEqual(['wowchar: saved the bank and the warband bank.'])
+      expect(plain(m, 'chat-closed')).toEqual(['toawowchar: saved the bank and the warband bank.'])
       const j = exportOf(m, 'session1')
       expect(j.bank).toEqual([1, 2, 3])
       expect(marker(j, 'bank')).toBe('live:1792000000')
@@ -734,12 +734,12 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
       const j = exportOf(m, 'session2-live')
       expect(j.bank).toEqual([7, 8])
       expect(marker(j, 'bank')).toBe(`live:${1792000000 + 3 * 86400 + 60}`)
-      expect(plain(m, 'chat-session2')).toEqual(['wowchar: saved the bank.'])
+      expect(plain(m, 'chat-session2')).toEqual(['toawowchar: saved the bank.'])
       expect(plain(m, 'chat-same-again')).toEqual([])
     })
 
     it('/wowchar reset clears this character: the cache is gone, the bank is not seen, one line is said', () => {
-      expect(plain(m, 'chat-reset')).toEqual(['wowchar: cleared the saved data of this character.'])
+      expect(plain(m, 'chat-reset')).toEqual(['toawowchar: cleared the saved data of this character.'])
       expect(json(m, 'db-after-reset')).toEqual({ Forever: [] })
       const j = exportOf(m, 'after-reset')
       expect(j.bank).toEqual([])
@@ -768,8 +768,8 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
       const m = scn('recipes')
       expect(json(m, 'timers')).toEqual([1])
       expect(plain(m, 'chat-before-flush')).toEqual([])
-      expect(plain(m, 'chat-first')).toEqual(['wowchar: saved 2 Tailoring recipes.'])
-      expect(plain(m, 'chat-second')).toEqual(['wowchar: saved 3 Tailoring recipes.'])
+      expect(plain(m, 'chat-first')).toEqual(['toawowchar: saved 2 Tailoring recipes.'])
+      expect(plain(m, 'chat-second')).toEqual(['toawowchar: saved 3 Tailoring recipes.'])
       expect(plain(m, 'chat-third')).toEqual([])
     })
 
@@ -793,7 +793,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
 
     it('a client without C_Timer captures at once', () => {
       const m = scn('recipes-no-timer')
-      expect(plain(m, 'chat')).toEqual(['wowchar: saved 1 Tailoring recipe.'])
+      expect(plain(m, 'chat')).toEqual(['toawowchar: saved 1 Tailoring recipe.'])
       expect(exportOf(m).sections.recipes.lines[0].recipes).toHaveLength(1)
     })
 
@@ -832,9 +832,9 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
     it('are read when a flight map opens and merged into the cache; a node discovered while it is open is added', () => {
       const m = scn('taxi')
       expect(exportOf(m, 'before').sections.flightPaths).toEqual({ source: 'missing', why: 'open_flight_map' })
-      expect(plain(m, 'chat')).toEqual(['wowchar: saved 3 flight paths.'])
+      expect(plain(m, 'chat')).toEqual(['toawowchar: saved 3 flight paths.'])
       expect(exportOf(m, 'opened').sections.flightPaths).toEqual({ source: 'live', at: 1792000000, ids: [11, 12, 14] })
-      expect(plain(m, 'chat-status')).toEqual(['wowchar: saved 4 flight paths.'])
+      expect(plain(m, 'chat-status')).toEqual(['toawowchar: saved 4 flight paths.'])
       expect(exportOf(m, 'closed').sections.flightPaths.ids).toEqual([11, 12, 14, 99])
     })
 
@@ -883,7 +883,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
   describe('combat', () => {
     it('/wowchar in combat says one line, opens nothing, and the window opens when combat ends (once)', () => {
       const m = scn('combat')
-      expect(plain(m, 'chat-combat')).toEqual(['wowchar: in combat. The export window opens when combat ends.'])
+      expect(plain(m, 'chat-combat')).toEqual(['toawowchar: in combat. The export window opens when combat ends.'])
       expect(json(m, 'window-made')).toEqual([false])
       expect(m.get('after-combat')!.startsWith(PREFIX)).toBe(true)
       expect(json(m, 'not-opened-twice')).toEqual([true])
@@ -903,7 +903,7 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
       const m = scn('window')
       expect(json(m, 'frame')).toEqual({
         template: 'BasicFrameTemplateWithInset', width: 620, height: 470, strata: 'DIALOG', movable: true, clamped: true,
-        shown: true, special: 'WowcharExportFrame', drag: 'LeftButton', title: 'wowchar export',
+        shown: true, special: 'toawowcharFrame', drag: 'LeftButton', title: 'wowchar export',
       })
     })
 
@@ -975,6 +975,321 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
     it('a client without UISpecialFrames still gets a working window', () => {
       const m = scn('window', 'no-special-frames')
       expect(json(m, 'frame')).toMatchObject({ special: 'none', shown: true })
+    })
+  })
+
+  // ── Phase A: the snapshot kept current by events, the relog, the two slash words, Forever by functions ──
+  // test/lua/snapshot-test.lua <scenario> [variant] prints `label<TAB>value` lines.
+  const snapMemo = new Map<string, Map<string, string>>()
+  const snap = (scenario: string, variant?: string) => {
+    const key = `${scenario} ${variant ?? ''}`
+    if (!snapMemo.has(key)) snapMemo.set(key, labelled(script('snapshot-test', scenario, ...(variant ? [variant] : []))))
+    return snapMemo.get(key)!
+  }
+  /** The addon's code without its comment lines. */
+  const codeOf = () => readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
+    .split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
+
+  describe('the snapshot: the cache kept current by game events', () => {
+    // counts are [equipped, bags, quests, professions, player]: how many times each part was read from the game
+    it('each event refreshes its own parts: equipment changed -> equipped; bag update -> bags; quest turned in -> completed quests and the player; skill lines -> professions; level up -> player', () => {
+      const m = snap('events')
+      expect(json(m, 'PLAYER_EQUIPMENT_CHANGED')).toEqual([1, 0, 0, 0, 0])
+      expect(json(m, 'BAG_UPDATE_DELAYED')).toEqual([0, 1, 0, 0, 0])
+      expect(json(m, 'QUEST_TURNED_IN')).toEqual([0, 0, 1, 0, 1])
+      expect(json(m, 'SKILL_LINES_CHANGED')).toEqual([0, 0, 0, 1, 0])
+      expect(json(m, 'PLAYER_LEVEL_UP')).toEqual([0, 0, 0, 0, 1])
+      expect(json(m, 'timers')).toEqual([0]) // the first event of each part is not delayed
+    })
+
+    it('what it keeps: the equipped items with their numbers, the bags, the completed quests, the professions and the player\'s numbers, all with the time they were read', () => {
+      const cache = json(snap('events'), 'cache')
+      expect(cache.equipped).toEqual([
+        { slot: 1, itemId: 12640, enchantId: 2564, gemIds: [213, 218], suffixId: 9, bonusIds: [1472, 6652, 7881] },
+        { slot: 2, itemId: 18404, enchantId: 0, gemIds: [], suffixId: 0, bonusIds: [] },
+      ])
+      expect(cache.bags).toEqual([900, 901])
+      expect(cache.quests).toEqual([3, 5, 9])
+      expect(cache.professions).toEqual([
+        { name: 'Tailoring', skillLineId: 197, rank: 225, maxRank: 300 },
+        { name: 'First Aid', skillLineId: 129, rank: 100, maxRank: 150 },
+      ])
+      expect(cache.player).toEqual({ at: 1792000500, money: 123456789, level: 60, xp: 1000, xpMax: 5000, rested: 0 })
+    })
+
+    it('says nothing in the chat window', () => {
+      expect(plain(snap('events'), 'chat')).toEqual([])
+      expect(plain(snap('throttle'), 'chat')).toEqual([])
+      expect(plain(snap('combat'), 'chat')).toEqual([])
+      expect(plain(snap('quest-turned-in'), 'chat')).toEqual([])
+    })
+
+    it('registers the five events', () => {
+      const code = codeOf()
+      for (const event of ['PLAYER_EQUIPMENT_CHANGED', 'BAG_UPDATE_DELAYED', 'QUEST_TURNED_IN', 'SKILL_LINES_CHANGED', 'PLAYER_LEVEL_UP']) {
+        expect(code, event).toMatch(new RegExp(`"${event}",`))
+      }
+      // the snapshot itself never calls Say()
+      const snapshotCode = code.slice(code.indexOf('function Snapshot.Run'), code.indexOf('function Snapshot.Reset'))
+      expect(snapshotCode).not.toContain('Say(')
+    })
+
+    describe('the throttle: at most one rebuild of a part per 5 seconds, the last change never lost', () => {
+      let m: Map<string, string>
+      beforeAll(() => { m = snap('throttle') })
+
+      it('the interval is one constant, 5 seconds', () => {
+        expect(codeOf()).toMatch(/^local SNAPSHOT_INTERVAL = 5$/m)
+      })
+
+      it('the first event rebuilds at once and schedules nothing', () => {
+        expect(json(m, 'first')).toEqual([1, 0]) // [reads, timers]
+      })
+
+      it('more events inside the interval read nothing and share ONE timer for the rest of the interval (4 s after 1 s)', () => {
+        expect(json(m, 'burst')).toEqual([1, 1, 4]) // [reads, timers, delay]
+      })
+
+      it('another part is not held back by it', () => {
+        expect(json(m, 'other-section')).toEqual([1, 0, 1]) // [bag reads, equipment reads, timers]
+      })
+
+      it('the timer rebuilds once and the cache has the last change of the burst', () => {
+        expect(json(m, 'trailing')).toEqual([1, 0, [1, 2, 3, 4]]) // [reads, timers, slots in the cache]
+      })
+
+      it('an event after the interval rebuilds at once; one right after it waits for what is left (3 s)', () => {
+        expect(json(m, 'later')).toEqual([1, 0])
+        expect(json(m, 'wait')).toEqual([0, 1, 3])
+      })
+
+      it('a clock that went back never makes the wait longer than the interval', () => {
+        expect(json(snap('clock-back'), 'delay')).toEqual([5])
+      })
+    })
+
+    describe('combat', () => {
+      let m: Map<string, string>
+      beforeAll(() => { m = snap('combat') })
+
+      it('nothing is read in combat, however many events come, and nothing is scheduled', () => {
+        expect(json(m, 'in-combat')).toEqual([[0, 0, 0, 0, 0], 0])
+      })
+
+      it('when combat ends every part that was held back is rebuilt ONCE (the player part had two events)', () => {
+        expect(json(m, 'after-combat')).toEqual([[1, 1, 1, 1, 1], 0])
+        expect(json(m, 'again')).toEqual([[1, 1, 1, 1, 1]])
+      })
+
+      it('a rebuild that was scheduled before combat and fires during it waits for the end of combat', () => {
+        expect(json(m, 'timer-in-combat')).toEqual([[0, 0, 0, 0, 1], 0])
+        expect(json(m, 'timer-after-combat')).toEqual([[0, 0, 0, 0, 2]])
+      })
+
+      it('PLAYER_REGEN_ENABLED still opens the window that /wowchar asked for in combat (the existing behaviour)', () => {
+        expect(codeOf()).toMatch(/Snapshot\.CombatEnded\(\)\n\s+if session\.pendingOpen then/)
+      })
+    })
+
+    it('a turned-in quest id goes into the cache at once, but only when the list was read before (one id must not look like a complete list); bad ids are ignored', () => {
+      const m = snap('quest-turned-in')
+      expect(json(m, 'no-cache')).toEqual([0])
+      expect(json(m, 'cached')).toEqual([3, 5, 9])
+      const [ids, timers] = json(m, 'immediately')
+      expect(ids).toEqual([3, 5, 9, 777, 778])
+      expect(timers).toBeGreaterThan(0) // the second rebuild was still waiting
+      expect(json(m, 'bad-ids')).toEqual([3, 5, 9, 777, 778])
+    })
+
+    it('/wowchar reset forgets the snapshot, and a rebuild scheduled before it does not bring it back', () => {
+      const m = snap('reset')
+      expect(json(m, 'scheduled')).toEqual([1])
+      expect(json(m, 'before-reset')).toEqual([1])
+      expect(json(m, 'db-after-reset')).toEqual({ Forever: [] })
+      expect(json(m, 'db-after-timer')).toEqual({ Forever: [] })
+      expect(plain(m, 'chat')).toEqual(['toawowchar: cleared the saved data of this character.'])
+      expect(json(m, 'fresh')).toEqual([1, 1]) // the next event starts fresh, not throttled
+    })
+
+    it('a client without C_Timer rebuilds at once on every event and raises nothing', () => {
+      const m = snap('no-timer')
+      expect(json(m, 'reads')).toEqual([3, 0, 0, 0, 0])
+      expect(json(m, 'timer')).toEqual([true])
+    })
+
+    it('a value the game hides is never written: the snapshot keeps the last good one', () => {
+      const m = snap('hidden')
+      expect(json(m, 'first')).toEqual([123456789])
+      expect(json(m, 'hidden')).toEqual([123456789, 1792000000])
+    })
+
+    it('a damaged saved record is rebuilt field by field: bad numbers, names and rows are dropped', () => {
+      const m = snap('damaged')
+      expect(json(m, 'equipped')).toEqual({ at: 1792000000, items: [{ slot: 1, itemId: 5, enchantId: 0, gemIds: [1, 2], suffixId: 0, bonusIds: [9, 8, 9] }] })
+      expect(json(m, 'bags')).toEqual({ at: 1792000000, ids: [3, 4], cut: false })
+      expect(json(m, 'professions')).toEqual({ at: 1792000000, list: [{ name: 'Tailoring', skillLineId: 197, maxRank: 75 }] })
+      expect(json(m, 'player')).toEqual({ at: 1792000000, xp: 5 })
+    })
+  })
+
+  describe('/wowchar and /toawowchar', () => {
+    it('are two words for the one command, and the slash word is not case sensitive', () => {
+      const m = snap('slash')
+      expect(json(m, 'globals')).toEqual(['/wowchar', '/toawowchar', 'none'])
+      expect(json(m, 'wowchar')).toEqual([true, true])
+      expect(json(m, 'toawowchar')).toEqual([true, true]) // the same text
+      expect(json(m, 'upper')).toEqual([true, true])
+      expect(json(m, 'other')).toEqual([false])
+    })
+
+    it('reset works with both words and says the same line', () => {
+      const m = snap('slash')
+      expect(json(m, 'db-before')).toEqual([1])
+      expect(json(m, 'reset-wowchar')).toEqual([true, 0])
+      expect(json(m, 'reset-toawowchar')).toEqual([true, 0])
+      expect(plain(m, 'chat-wowchar')).toEqual(['toawowchar: cleared the saved data of this character.'])
+      expect(plain(m, 'chat-toawowchar')).toEqual(['toawowchar: cleared the saved data of this character.'])
+    })
+
+    it('the addon is named toawowchar: TOC title, SavedVariables, frame name; the old names are gone', () => {
+      const toc = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.toc`, 'utf8')
+      expect(toc).toMatch(/^## Title: toawowchar$/m)
+      expect(toc).toMatch(/^## SavedVariables: toawowcharDB$/m)
+      expect(toc).toMatch(/^toawowchar\.lua$/m)
+      const code = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
+      expect(code).not.toMatch(/WowcharExport/)
+      expect(code).toContain('"toawowcharFrame"')
+      expect(code).toContain('PREFIX = "WOWCHAR:"') // the export prefix is unchanged
+    })
+  })
+
+  describe('after a relog /wowchar gives a complete export without opening the bank', () => {
+    let m: Map<string, string>
+    let j: any
+    beforeAll(() => {
+      m = snap('relog')
+      j = parseExport(m.get('relog')!)
+    })
+
+    it('session 1: the bank, a profession window and the flight map were opened once (one chat line each); the events then added nothing to the chat', () => {
+      expect(plain(m, 'chat-session1')).toEqual([
+        'toawowchar: saved the bank and the warband bank.',
+        'toawowchar: saved 3 Tailoring recipes.',
+        'toawowchar: saved 3 flight paths.',
+      ])
+      expect(json(m, 'snapshot')).toEqual({ equipped: 3, bags: [900, 901], quests: [3, 5, 9, 1001], professions: 3, level: 61 })
+    })
+
+    it('after the relog every section is live or cache; none is missing', () => {
+      expect(Object.keys(j.sections).sort()).toEqual([...SECTION_NAMES].sort())
+      for (const name of SECTION_NAMES) expect(j.sections[name].source, name).not.toBe('missing')
+    })
+
+    it('the only part the addon cannot list is the Legacy challenges, and they say so', () => {
+      expect(j.sections.legacy.challenges).toEqual({ source: 'missing', why: 'not_available' })
+    })
+
+    it('the bank, the warband bank, the recipes and the flight paths come from the cache with the time they were read; the rest is read now', () => {
+      for (const name of ['bank', 'warbank', 'recipes', 'flightPaths']) expect(marker(j, name), name).toBe('cache:1792000000')
+      for (const name of ['equipped', 'bags', 'professions', 'questsDone', 'questLog', 'reputation', 'player', 'talents', 'legacy', 'honor', 'classSpells']) {
+        expect(j.sections[name].source, name).toBe('live')
+      }
+      expect(j.bank).toEqual([11, 12])
+      expect(j.warbank).toEqual([91, 92])
+      expect(j.bankSeen).toBe(true)
+      expect(j.bankSource).toBe('tabs')
+      expect(j.sections.recipes.lines[0].recipes.map((r: any) => r[0])).toEqual([1, 2, 4])
+      expect(j.sections.flightPaths.ids).toEqual([11, 12, 14])
+    })
+
+    it('what the events kept is in the export: the gear, the bags, the quest turned in, the new profession, the level and the money', () => {
+      expect(j.equipped.map((e: any) => e.slot)).toEqual([1, 2, 16])
+      expect(j.bags).toEqual([900, 901])
+      expect(j.sections.questsDone.ids).toEqual([3, 5, 9, 1001])
+      expect(j.professions.map((p: any) => p.name)).toEqual(['Tailoring', 'First Aid', 'Cooking'])
+      expect(j.sections.player).toMatchObject({ level: 61, money: 123999999 })
+    })
+
+    it('/wowchar and /toawowchar give the same text, the window says nothing in the chat, and the server decodes it', () => {
+      expect(m.get('relog-alias')).toBe(m.get('relog'))
+      expect(plain(m, 'chat-session2')).toEqual([])
+      const p = decoded(m, 'relog')
+      expect(p.format).toBe(3)
+      expect(p.bank).toEqual([11, 12])
+      expect(p.sections!.sources.bank).toEqual({ source: 'cache', at: 1792000000 })
+      expect(p.sections!.sources.flightPaths).toEqual({ source: 'cache', at: 1792000000 })
+      expect(p.sections!.recipes).toHaveLength(1)
+      expect(p.sections!.questsDone).toEqual([3, 5, 9, 1001])
+    })
+
+    it('the window lists the cached rows as «saved» and the rest as «read now»', () => {
+      const rows = plain(m, 'window').join('\n')
+      expect(rows).toMatch(/Bank \(2\)\s+saved 2 h ago/)
+      expect(rows).toMatch(/Flight paths \(3\)\s+saved 2 h ago/)
+      expect(rows).toMatch(/Equipped items\s+read now/)
+    })
+
+    it('the text is pinned: test/fixtures/addon-export-relog.txt (the server import test sends this very text)', () => {
+      const fixture = readFileSync(`${ROOT}/app/test/fixtures/addon-export-relog.txt`, 'utf8').trim()
+      expect(script('snapshot-test', 'relog-text')[0]).toBe(fixture)
+      expect(m.get('relog')).toBe(fixture)
+      const blind = readFileSync(`${ROOT}/app/test/fixtures/addon-export-relog-blind.txt`, 'utf8').trim()
+      expect(script('snapshot-test', 'relog-text', 'blind')[0]).toBe(blind)
+    })
+
+    it('a game that also hides the money (a secret value) and has no profession list: both come from the snapshot as cache, with their time', () => {
+      const b = parseExport(snap('relog', 'blind').get('relog')!)
+      expect(b.sections.player).toEqual({ source: 'cache', at: 1792000000, money: 123999999, level: 61, xp: 1000, xpMax: 5000, rested: 0 })
+      expect(b.sections.professions).toEqual({ source: 'cache', at: 1792000000 })
+      expect(b.professions.map((p: any) => p.name)).toEqual(['Tailoring', 'First Aid', 'Cooking'])
+      for (const name of SECTION_NAMES) expect(b.sections[name].source, name).not.toBe('missing')
+      expect(decodeAddonExport(snap('relog', 'blind').get('relog')!).sections!.sources.player).toEqual({ source: 'cache', at: 1792000000 })
+    })
+  })
+
+  describe('Forever is recognised by which functions exist, never by a number', () => {
+    it('the code reads the interface number once, and only to report it in client.interface', () => {
+      const code = codeOf()
+      expect(code).not.toMatch(/WOW_PROJECT|IsClassicEra|IsClassic|IsRetail|LE_EXPANSION|GetExpansionLevel|GetClientEdition/)
+      expect(code.match(/GetBuildInfo/g)).toHaveLength(1)
+      const lines = code.split('\n').filter(l => /\binterface\b/.test(l)).map(l => l.trim())
+      expect(lines).toEqual([
+        'local _, build, _, interface = GetBuildInfo()',
+        'client = { build = build, interface = interface },',
+      ])
+    })
+
+    const baseline = () => parseExport(snap('interface', '16001').get('export')!)
+    it.each(['11507', '16002', '120105', '0', '16001:2', '120105:1', '11507:14'])('under interface %s (and WOW_PROJECT_ID) the sections are the ones of 16001', (variant) => {
+      const j = parseExport(snap('interface', variant).get('export')!)
+      const { client: a, ...rest } = j
+      const { client: b, ...base } = baseline()
+      expect(rest).toEqual(base)
+      expect(a.interface).toBe(Number(variant.split(':')[0]))
+      expect(b.interface).toBe(16001)
+      // only the two bank sections are missing in both: the bank was never opened
+      expect(SECTION_NAMES.filter(n => j.sections[n].source === 'missing')).toEqual(['bank', 'warbank'])
+    })
+
+    it.each([
+      ['C_TradeSkillUI.GetRecipeSchematic', ['recipes']],
+      ['C_TaxiMap', ['flightPaths']],
+      ['C_Traits', ['talents', 'legacy']],
+      ['C_Reputation.GetFactionDataByIndex', ['reputation']],
+      ['C_QuestLog.GetAllCompletedQuestIDs', ['questsDone']],
+      ['C_MajorFactions', ['honor']],
+      ['C_SpellBook', ['classSpells']],
+      ['GetProfessions', ['professions']],
+    ])('without %s the section is missing/not_available, and every other section is as before', (path, names) => {
+      const j = parseExport(snap('without', path).get('export')!)
+      const base = baseline()
+      for (const name of SECTION_NAMES) {
+        if (names.includes(name)) expect(j.sections[name], name).toEqual({ source: 'missing', why: 'not_available' })
+        // the class spells skip the spell lines named like a profession, so without the profession list one more line shows
+        else if (path === 'GetProfessions' && name === 'classSpells') expect(j.sections[name].ids).toEqual([78, 772, 3908, 6603])
+        else expect(j.sections[name], name).toEqual(base.sections[name])
+      }
+      expect(decoded(snap('without', path)).sections!.sources[names[0] as 'recipes']).toEqual({ source: 'missing', why: 'not_available' })
     })
   })
 

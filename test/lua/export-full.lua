@@ -50,7 +50,7 @@ Env.load()
 
 -- An earlier session read the Blacksmithing recipes: they are in the cache, this
 -- session did not open that window. (The cache is the saved variable, kept by the client.)
-WowcharExportDB = {
+toawowcharDB = {
     ["Argent Dawn"] = {
         Thorin = {
             v = 1,

@@ -1,4 +1,4 @@
--- A stub of the WoW API for running addon/WowcharExport/WowcharExport.lua in
+-- A stub of the WoW API for running addon/toawowchar/toawowchar.lua in
 -- plain Lua 5.1 (no client). Usage from a test script, run from the repository
 -- root:
 --     local Env = dofile("app/test/lua/wow-env.lua")
@@ -12,6 +12,7 @@
 -- makes it was asked for. Templates the stub knows:
 --     BasicFrameTemplateWithInset   .TitleText
 --     InputScrollFrameTemplate      .EditBox, .CharCount
+-- Env.slash("/toawowchar reset") types a command by its slash word (every alias).
 -- Env.now is what time() answers (unix seconds; a scenario moves it to age a cache).
 -- Env.missingTemplates["Name"] = true makes CreateFrame raise for that template
 -- (the addon must fall back). Env.chat is every line the addon said in the chat
@@ -28,6 +29,7 @@ Env.chat = {}
 Env.combat = false
 Env.missingTemplates = {}
 Env.timers = {}
+Env.timerDelays = {}
 
 local METHODS = {
     -- anything with a position
@@ -221,18 +223,23 @@ end
 -- Loads the addon. The second argument stands in for the addon's namespace table
 -- the client passes (the addon puts its helpers in it).
 function Env.load()
-    local chunk = assert(loadfile("addon/WowcharExport/WowcharExport.lua"))
-    chunk("WowcharExport", Env.ns)
+    local chunk = assert(loadfile("addon/toawowchar/toawowchar.lua"))
+    chunk("toawowchar", Env.ns)
 end
 
 -- C_Timer.After for the debounce: callbacks wait in Env.timers until flushTimers().
+-- Env.timerDelays[i] is the delay C_Timer.After was given for Env.timers[i].
 function Env.useTimers()
-    C_Timer = { After = function(_, fn) Env.timers[#Env.timers + 1] = fn end }
+    C_Timer = { After = function(delay, fn)
+        Env.timers[#Env.timers + 1] = fn
+        Env.timerDelays[#Env.timers] = delay
+    end }
 end
 
 function Env.flushTimers()
     local run = Env.timers
     Env.timers = {}
+    Env.timerDelays = {}
     for _, fn in ipairs(run) do fn() end
 end
 
@@ -266,7 +273,7 @@ function Env.installContainers(world)
 end
 
 -- A new play session: the addon is loaded again with the same saved variable
--- (WowcharExportDB stays as it is), no frame of the first session hears events
+-- (toawowcharDB stays as it is), no frame of the first session hears events
 -- any more, and the chat and window texts start empty. Call Env.load() after it.
 function Env.relog()
     Env.frames = { UIParent }
@@ -274,9 +281,28 @@ function Env.relog()
     Env.chat = {}
     Env.editBox = nil
     Env.timers = {}
+    Env.timerDelays = {}
     Env.ns = {}
     SlashCmdList = {}
     UISpecialFrames = {}
+end
+
+-- Types a slash command the way the game does: "/toawowchar reset" runs the handler
+-- of the SlashCmdList entry whose SLASH_<NAME>1, SLASH_<NAME>2, ... holds "/toawowchar".
+-- Returns true when some command answered to that word.
+function Env.slash(line)
+    local word, rest = line:match("^(%S+)%s*(.*)$")
+    for name, handler in pairs(SlashCmdList) do
+        local n = 1
+        while _G["SLASH_" .. name .. n] do
+            if _G["SLASH_" .. name .. n]:lower() == word:lower() then
+                handler(rest)
+                return true
+            end
+            n = n + 1
+        end
+    end
+    return false
 end
 
 -- Types /wowchar and returns the text now in the copy box.

@@ -1,17 +1,19 @@
--- WowcharExport 0.4.0
+-- toawowchar 0.4.0
 --
--- Type /wowchar to open a window with a text string (who the character is,
--- equipped items, bags, the bank and the warband bank, professions with their
--- recipes, completed quests and the quest log, reputation, money and XP,
--- talents, Legacy, flight paths, the season's PvP rank and the class spells
--- the character knows). Copy it (Ctrl+C) and paste it at wowchar: on «My
+-- Type /wowchar (or /toawowchar, the same command) to open a window with a text
+-- string (who the character is, equipped items, bags, the bank and the warband
+-- bank, professions with their recipes, completed quests and the quest log,
+-- reputation, money and XP, talents, Legacy, flight paths, the season's PvP rank
+-- and the class spells the character knows). Copy it (Ctrl+C) and paste it at wowchar: on «My
 -- characters» to add the character, or on the character's BiS page to mark the
 -- BiS items you already have as obtained. The addon sends nothing anywhere.
 --
--- What it saves (SavedVariables: WowcharExportDB, a CACHE only): what the game
+-- What it saves (SavedVariables: toawowcharDB, a CACHE only): what the game
 -- only lets it read while a window is open (the bank and the warband bank, the
 -- recipes of each profession, the flight paths), the Legacy tree and the
--- completed quests. Each cached part has the time it was read. The addon works
+-- completed quests. Game events also keep a copy of the equipped items, the
+-- bags, the completed quests, the professions and the money, level and XP
+-- current (Snapshot below). Each cached part has the time it was read. The addon works
 -- exactly the same when nothing was saved or the client does not keep the file:
 -- the text is then made from what the game answers now, and the parts it could
 -- not read say why. "/wowchar reset" clears this character's cache.
@@ -19,7 +21,9 @@
 -- Chat: the addon says one short line when it has cached something new (the
 -- bank, a profession's recipes, flight paths), one when /wowchar is typed in
 -- combat (the window then opens when combat ends) and one for "/wowchar reset".
--- It says nothing else.
+-- It says nothing else; the snapshot of the equipped items, bags, completed
+-- quests, professions and player numbers that game events keep current (see
+-- Snapshot) is silent.
 --
 -- The text is "WOWCHAR:3:" followed by plain JSON, written by the small
 -- serializer below (format 3 = format 2's content plus "sections"). No
@@ -189,6 +193,7 @@ local cutSections = false
 local Cache = {}   -- SavedVariables cache
 local Read = {}    -- one reader per section
 local Capture = {} -- event captures (a window is open)
+local Snapshot = {} -- the cache kept current by game events
 local UI = {}      -- the window
 
 ---------------------------------------------------------------------------
@@ -304,7 +309,7 @@ end
 
 -- One short line in the chat window.
 local function Say(message)
-    local line = "|cff8B7CFFwowchar:|r " .. message
+    local line = "|cff8B7CFFtoawowchar:|r " .. message
     if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
         DEFAULT_CHAT_FRAME:AddMessage(line)
     elseif print then
@@ -376,9 +381,9 @@ local function With(marker, data)
 end
 
 ---------------------------------------------------------------------------
--- Cache (SavedVariables: WowcharExportDB[realm][name])
+-- Cache (SavedVariables: toawowcharDB[realm][name])
 ---------------------------------------------------------------------------
--- The table is only a cache. The addon never needs it: when WowcharExportDB is
+-- The table is only a cache. The addon never needs it: when toawowcharDB is
 -- nil or not a table, or when the client does not save it, everything below works
 -- on a table that lives for this play session. A record read from the saved file
 -- is rebuilt field by field the first time it is used (Cache.Clean): only whole
@@ -393,9 +398,16 @@ end
 --   flights   { at, ids = {taxi node ids, sorted} }
 --   quests    { at, ids = {completed quest ids, sorted}, cut }
 --   legacy    { at, points = { available, cap, spent }, trees = { { tree, spent, nodes = { {node, rank, entry} } } } }
+--   equipped  { at, items = { { slot, itemId, enchantId, gemIds, suffixId, bonusIds } } }
+--   bags      { at, ids = {item ids, sorted}, cut }
+--   professions { at, list = { { name, skillLineId, rank, maxRank } } }
+--   player    { at, money, level, xp, xpMax, rested }
 -- Caches are only ever MERGED into (recipes, flight paths and completed quests
--- keep everything seen before); the bank, the warband bank and Legacy are
--- replaced by a complete new read.
+-- keep everything seen before); the bank, the warband bank, Legacy, the equipped
+-- items, the bags, the professions and the player's numbers are replaced by a
+-- complete new read. The last four are kept current by game events (see
+-- Snapshot) and are the part of the cache that /wowchar uses only when the game
+-- gives nothing now (professions, player); equipped and bags are always read live.
 
 local checked = setmetatable({}, { __mode = "k" })
 local fallbackRecord
@@ -500,6 +512,93 @@ local function CleanLegacy(raw)
     return clean
 end
 
+-- A list of whole numbers in their order (the order of bonus ids matters), each
+-- between min and MAX_ID, at most `cap` of them.
+local function CleanOrdered(raw, cap, min)
+    local out = {}
+    if type(raw) == "table" then
+        for _, value in ipairs(raw) do
+            if #out >= cap then
+                break
+            end
+            local id = Int(value)
+            if id and id >= min and id <= MAX_ID then
+                out[#out + 1] = id
+            end
+        end
+    end
+    return out
+end
+
+local function CleanEquipped(raw)
+    local out = {}
+    if type(raw) == "table" then
+        for _, item in ipairs(raw) do
+            if #out >= LAST_EQUIPMENT_SLOT then
+                break
+            end
+            if type(item) == "table" then
+                local slot, itemId = Int(item.slot), Int(item.itemId)
+                if slot and slot >= 1 and slot <= LAST_EQUIPMENT_SLOT and itemId and itemId >= 1 and itemId <= MAX_ID then
+                    out[#out + 1] = {
+                        slot = slot,
+                        itemId = itemId,
+                        enchantId = InRange(item.enchantId, 0, MAX_ID) or 0,
+                        gemIds = CleanOrdered(item.gemIds, MAX_GEMS, 1),
+                        suffixId = InRange(item.suffixId, 0, MAX_ID) or 0,
+                        bonusIds = CleanOrdered(item.bonusIds, MAX_BONUS_IDS, 1),
+                    }
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function CleanProfessionList(raw)
+    local out = {}
+    if type(raw) == "table" then
+        for _, row in ipairs(raw) do
+            if #out >= MAX_PROFESSIONS then
+                break
+            end
+            local name = type(row) == "table" and Fit(row.name, BOUNDS.professionName) or nil
+            if name then
+                out[#out + 1] = {
+                    name = name,
+                    skillLineId = InRange(row.skillLineId, 0, BOUNDS.count),
+                    rank = InRange(row.rank, 0, BOUNDS.count),
+                    maxRank = InRange(row.maxRank, 0, BOUNDS.count),
+                }
+            end
+        end
+    end
+    return out
+end
+
+-- The player's numbers, each only when it is inside its bound; nil when none is.
+local function CleanPlayer(raw)
+    if type(raw) ~= "table" then
+        return nil
+    end
+    local at = CleanTime(raw.at)
+    if not at then
+        return nil
+    end
+    local clean = {
+        at = at,
+        money = InRange(raw.money, 0, BOUNDS.money),
+        level = InRange(raw.level, 1, BOUNDS.level),
+        xp = InRange(raw.xp, 0, BOUNDS.counter),
+        xpMax = InRange(raw.xpMax, 0, BOUNDS.counter),
+        rested = InRange(raw.rested, 0, BOUNDS.counter),
+    }
+    if clean.money == nil and clean.level == nil and clean.xp == nil and clean.xpMax == nil and clean.rested == nil then
+        return nil
+    end
+    return clean
+end
+
 -- Rebuilds a record from whatever the saved file held.
 function Cache.Clean(raw)
     local rec = { v = CACHE_VERSION, recipes = {} }
@@ -564,6 +663,27 @@ function Cache.Clean(raw)
         end
     end
     rec.legacy = CleanLegacy(raw.legacy)
+
+    if type(raw.equipped) == "table" then
+        local at = CleanTime(raw.equipped.at)
+        if at then
+            rec.equipped = { at = at, items = CleanEquipped(raw.equipped.items) }
+        end
+    end
+    if type(raw.bags) == "table" then
+        local at = CleanTime(raw.bags.at)
+        if at then
+            local ids, cut = CleanIds(raw.bags.ids, MAX_IDS)
+            rec.bags = { at = at, ids = ids, cut = cut or raw.bags.cut == true }
+        end
+    end
+    if type(raw.professions) == "table" then
+        local at = CleanTime(raw.professions.at)
+        if at then
+            rec.professions = { at = at, list = CleanProfessionList(raw.professions.list) }
+        end
+    end
+    rec.player = CleanPlayer(raw.player)
     return rec
 end
 
@@ -586,14 +706,14 @@ function Cache.Get()
         fallbackRecord = fallbackRecord or Cache.Clean(nil)
         return fallbackRecord
     end
-    if type(WowcharExportDB) ~= "table" then
-        WowcharExportDB = {}
+    if type(toawowcharDB) ~= "table" then
+        toawowcharDB = {}
     end
     local realm = RealmName() or "?"
-    local realms = WowcharExportDB[realm]
+    local realms = toawowcharDB[realm]
     if type(realms) ~= "table" then
         realms = {}
-        WowcharExportDB[realm] = realms
+        toawowcharDB[realm] = realms
     end
     local rec = realms[name]
     if type(rec) ~= "table" or not checked[rec] then
@@ -608,8 +728,8 @@ end
 -- play session.
 function Cache.Reset()
     local name = UnitName and UnitName("player")
-    if type(name) == "string" and name ~= "" and type(WowcharExportDB) == "table" then
-        local realms = WowcharExportDB[RealmName() or "?"]
+    if type(name) == "string" and name ~= "" and type(toawowcharDB) == "table" then
+        local realms = toawowcharDB[RealmName() or "?"]
         if type(realms) == "table" then
             realms[name] = nil
         end
@@ -618,6 +738,7 @@ function Cache.Reset()
     session.live = {}
     session.bankDirty, session.warbankDirty = false, false
     session.recipesPending = false
+    Snapshot.Reset()
 end
 
 ---------------------------------------------------------------------------
@@ -1838,6 +1959,170 @@ function Capture.Flights()
 end
 
 ---------------------------------------------------------------------------
+-- Snapshot: the cache kept current by game events
+---------------------------------------------------------------------------
+-- The equipped items, the bags, the completed quests, the professions and the
+-- player's numbers are read from the game whenever they change, so SavedVariables
+-- holds a current copy when the character logs out, whether or not /wowchar was
+-- ever typed. The events and what each one refreshes:
+--   PLAYER_EQUIPMENT_CHANGED  equipped
+--   BAG_UPDATE_DELAYED        bags (the bank is scanned as before while it is open)
+--   QUEST_TURNED_IN           quests (the turned-in id is added at once) and player
+--   SKILL_LINES_CHANGED       professions
+--   PLAYER_LEVEL_UP           player
+-- At most one rebuild of a section per SNAPSHOT_INTERVAL seconds: the first event
+-- rebuilds at once, the ones that follow inside the interval share ONE rebuild
+-- when the interval is over (so the last change is never lost). In combat nothing
+-- is read: the section waits for PLAYER_REGEN_ENABLED and is then rebuilt once.
+-- A snapshot never says anything in the chat.
+
+-- Seconds between two rebuilds of one section.
+local SNAPSHOT_INTERVAL = 5
+
+-- The order the deferred sections are rebuilt in when combat ends.
+local SNAPSHOT_SECTIONS = { "equipped", "bags", "quests", "professions", "player" }
+
+-- section -> { last = unix time of its last rebuild, timer = true while a rebuild
+-- is scheduled, deferred = true when combat held a rebuild back }
+local snapshotState = {}
+for _, name in ipairs(SNAPSHOT_SECTIONS) do
+    snapshotState[name] = { timer = false, deferred = false }
+end
+-- Bumped by /wowchar reset: a rebuild scheduled before it does nothing.
+local snapshotGeneration = 0
+
+local snapshotRebuild = {}
+
+function snapshotRebuild.equipped(rec, at)
+    local items = CollectEquipped()
+    if not secretSeen then
+        rec.equipped = { at = at, items = items }
+    end
+end
+
+function snapshotRebuild.bags(rec, at)
+    -- The bags are read like the bank is: the cut flag is the snapshot's own.
+    local previous = truncated
+    truncated = false
+    local ids = CollectBags()
+    local cut = truncated
+    truncated = previous
+    if not secretSeen then
+        table.sort(ids)
+        rec.bags = { at = at, ids = ids, cut = cut }
+    end
+end
+
+function snapshotRebuild.quests(rec, at)
+    Section(Read.QuestsDone, rec, at)
+end
+
+function snapshotRebuild.professions(rec, at)
+    local list, ok = CollectProfessions()
+    if ok and not secretSeen then
+        rec.professions = { at = at, list = list }
+    end
+end
+
+-- The player's numbers go in the cache record as the Player reader gives them.
+local function StorePlayer(rec, at, section)
+    if type(section) == "table" and section.source == "live" then
+        rec.player = {
+            at = at, money = section.money, level = section.level,
+            xp = section.xp, xpMax = section.xpMax, rested = section.rested,
+        }
+    end
+end
+
+function snapshotRebuild.player(rec, at)
+    secretSeen = false
+    local ok, section = pcall(Read.Player)
+    if ok and not secretSeen then
+        StorePlayer(rec, at, section)
+    end
+end
+
+-- Rebuilds one section now (or marks it deferred in combat).
+function Snapshot.Run(section)
+    local state = snapshotState[section]
+    if InCombat() then
+        state.deferred = true
+        return
+    end
+    state.deferred = false
+    state.last = Now()
+    local at = CleanTime(state.last)
+    if not at then
+        return
+    end
+    secretSeen = false
+    pcall(snapshotRebuild[section], Cache.Get(), at)
+end
+
+-- An event asks for a rebuild: now, or once at the end of the interval.
+function Snapshot.Request(section)
+    local state = snapshotState[section]
+    if state.timer then
+        return
+    end
+    if InCombat() then
+        state.deferred = true
+        return
+    end
+    local wait = state.last and (state.last + SNAPSHOT_INTERVAL - Now()) or 0
+    if wait > 0 and C_Timer and C_Timer.After then
+        if wait > SNAPSHOT_INTERVAL then
+            wait = SNAPSHOT_INTERVAL -- the clock went back
+        end
+        local generation = snapshotGeneration
+        state.timer = true
+        C_Timer.After(wait, function()
+            if generation ~= snapshotGeneration then
+                return
+            end
+            state.timer = false
+            Snapshot.Run(section)
+        end)
+        return
+    end
+    Snapshot.Run(section)
+end
+
+-- Combat ended: every section that was held back is rebuilt once.
+function Snapshot.CombatEnded()
+    for _, section in ipairs(SNAPSHOT_SECTIONS) do
+        if snapshotState[section].deferred then
+            snapshotState[section].deferred = false
+            Snapshot.Request(section)
+        end
+    end
+end
+
+-- A quest was turned in: its id goes into the completed quests at once (the game's
+-- list may not have it yet). Only when the list was read before: a cache with one
+-- id would look like a complete one.
+function Snapshot.TurnedIn(questId)
+    local id = InRange(questId, 1, MAX_ID)
+    local rec = Cache.Get()
+    if not (id and rec.quests) then
+        return
+    end
+    local set = { [id] = true }
+    for _, known in ipairs(rec.quests.ids) do
+        set[known] = true
+    end
+    local ids, cut = SortedKeys(set, CAPS.questsDone)
+    rec.quests = { at = rec.quests.at, ids = ids, cut = cut or rec.quests.cut }
+end
+
+function Snapshot.Reset()
+    snapshotGeneration = snapshotGeneration + 1
+    for _, name in ipairs(SNAPSHOT_SECTIONS) do
+        snapshotState[name] = { timer = false, deferred = false }
+    end
+end
+
+---------------------------------------------------------------------------
 -- The payload
 ---------------------------------------------------------------------------
 
@@ -1888,9 +2173,34 @@ local function BuildPayload()
     end
 
     -- Bags are read now; the bank lists were cut at the time they were scanned.
+    secretSeen = false
     local bags = CollectBags()
+    local bagsCut = truncated
     local equipped = CollectEquipped()
     local professions, professionsOk = CollectProfessions()
+    local stamp = CleanTime(now)
+
+    -- What was read is also the newest cache copy of those parts (unless the game hid
+    -- a value). The professions come from the cache when the game has no such function.
+    if stamp and not secretSeen then
+        rec.equipped = { at = stamp, items = equipped }
+        local sorted = {}
+        for i = 1, #bags do
+            sorted[i] = bags[i]
+        end
+        table.sort(sorted)
+        rec.bags = { at = stamp, ids = sorted, cut = bagsCut }
+        if professionsOk then
+            rec.professions = { at = stamp, list = professions }
+        end
+    end
+    local professionsCached = false
+    if not professionsOk and rec.professions then
+        professions, professionsOk, professionsCached = {}, true, true
+        for i, row in ipairs(rec.professions.list) do
+            professions[i] = row
+        end
+    end
     local professionNames = {}
     for _, profession in ipairs(professions) do
         professionNames[profession.name] = true
@@ -1904,7 +2214,7 @@ local function BuildPayload()
         -- A client with no warband bank tabs (Enum.BagIndex.AccountBankTab_1) has no such bank to open.
         warbank = rec.warbank and (session.live.warbank and Live(session.live.warbank) or Cached(rec.warbank.at))
             or Missing(C_Container and Enum and Enum.BagIndex and Enum.BagIndex.AccountBankTab_1 ~= nil and "open_bank" or "not_available"),
-        professions = professionsOk and Live(nil) or Missing("not_available"),
+        professions = professionsOk and (professionsCached and Cached(rec.professions.at) or Live(nil)) or Missing("not_available"),
         recipes = Section(Read.Recipes, rec),
         questsDone = Section(Read.QuestsDone, rec, now),
         questLog = Section(Read.QuestLog),
@@ -1916,6 +2226,18 @@ local function BuildPayload()
         honor = Section(Read.Honor),
         classSpells = Section(Read.ClassSpells, professionNames),
     }
+
+    -- The player's numbers: kept in the cache when read, taken from it when the game gives none now.
+    if sections.player.source == "live" then
+        if stamp then
+            StorePlayer(rec, stamp, sections.player)
+        end
+    elseif rec.player then
+        sections.player = With(Cached(rec.player.at), {
+            money = rec.player.money, level = rec.player.level, xp = rec.player.xp,
+            xpMax = rec.player.xpMax, rested = rec.player.rested,
+        })
+    end
 
     -- The flags and the sections must agree (the server checks it): a bank section
     -- that could not be made (missing) has no list and is not «seen».
@@ -2255,7 +2577,7 @@ local widgets = {}
 -- value maxLetters = 0 for no limit) when the client has it; else the plain scroll
 -- frame and edit box of 0.3.1.
 local function CreateTextBox(parent)
-    local ok, scroll = pcall(CreateFrame, "ScrollFrame", "WowcharExportInput", parent, "InputScrollFrameTemplate")
+    local ok, scroll = pcall(CreateFrame, "ScrollFrame", "toawowcharInput", parent, "InputScrollFrameTemplate")
     if ok and type(scroll) == "table" and type(scroll.EditBox) == "table" then
         scroll:SetPoint("TOPLEFT", 16, -234)
         scroll:SetSize(556, 130)
@@ -2269,10 +2591,10 @@ local function CreateTextBox(parent)
         return scroll, box, true
     end
 
-    local plain = CreateFrame("ScrollFrame", "WowcharExportScroll", parent, "UIPanelScrollFrameTemplate")
+    local plain = CreateFrame("ScrollFrame", "toawowcharScroll", parent, "UIPanelScrollFrameTemplate")
     plain:SetPoint("TOPLEFT", 16, -234)
     plain:SetSize(540, 130)
-    local box = CreateFrame("EditBox", "WowcharExportEditBox", plain)
+    local box = CreateFrame("EditBox", "toawowcharEditBox", plain)
     box:SetMultiLine(true)
     box:SetAutoFocus(false)
     box:SetFontObject(ChatFontNormal)
@@ -2285,12 +2607,12 @@ end
 
 function UI.Create()
     local templated = true
-    local created, f = pcall(CreateFrame, "Frame", "WowcharExportFrame", UIParent, "BasicFrameTemplateWithInset")
+    local created, f = pcall(CreateFrame, "Frame", "toawowcharFrame", UIParent, "BasicFrameTemplateWithInset")
     if not created or type(f) ~= "table" then
         templated = false
-        created, f = pcall(CreateFrame, "Frame", "WowcharExportFrame", UIParent, "BackdropTemplate")
+        created, f = pcall(CreateFrame, "Frame", "toawowcharFrame", UIParent, "BackdropTemplate")
         if not created then
-            f = CreateFrame("Frame", "WowcharExportFrame", UIParent)
+            f = CreateFrame("Frame", "toawowcharFrame", UIParent)
         end
         if f.SetBackdrop then
             f:SetBackdrop({
@@ -2325,7 +2647,7 @@ function UI.Create()
     -- Escape closes the window (when the client has the list; not verified on Forever).
     pcall(function()
         if type(UISpecialFrames) == "table" and tinsert then
-            tinsert(UISpecialFrames, "WowcharExportFrame")
+            tinsert(UISpecialFrames, "toawowcharFrame")
         end
     end)
 
@@ -2549,11 +2871,11 @@ end
 local events = CreateFrame("Frame")
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
-        if arg1 == addonName and type(WowcharExportDB) ~= "table" then
-            -- The client has put the saved table in WowcharExportDB by now, or left it
+        if arg1 == addonName and type(toawowcharDB) ~= "table" then
+            -- The client has put the saved table in toawowcharDB by now, or left it
             -- nil (nothing saved, or SavedVariables not kept): start with an empty one.
             -- The character's record is looked up and checked when it is first needed.
-            WowcharExportDB = {}
+            toawowcharDB = {}
         end
     elseif event == "BANKFRAME_OPENED" then
         session.bankOpen = true
@@ -2571,11 +2893,22 @@ events:SetScript("OnEvent", function(_, event, arg1)
         elseif bank then
             Say("saved the bank.")
         end
-    elseif event == "BAG_UPDATE_DELAYED" and session.bankOpen then
+    elseif event == "BAG_UPDATE_DELAYED" then
         -- Bank tabs can fill in just after the window opens.
-        if not InCombat() then
+        if session.bankOpen and not InCombat() then
             ScanBank()
         end
+        Snapshot.Request("bags")
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        Snapshot.Request("equipped")
+    elseif event == "QUEST_TURNED_IN" then
+        Snapshot.TurnedIn(arg1)
+        Snapshot.Request("quests")
+        Snapshot.Request("player") -- the reward: XP and money
+    elseif event == "SKILL_LINES_CHANGED" then
+        Snapshot.Request("professions")
+    elseif event == "PLAYER_LEVEL_UP" then
+        Snapshot.Request("player")
     elseif event == "TRADE_SKILL_LIST_UPDATE" or event == "TRADE_SKILL_DATA_SOURCE_CHANGED" then
         Capture.ScheduleRecipes()
     elseif event == "TAXIMAP_OPENED" then
@@ -2588,6 +2921,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "TAXIMAP_CLOSED" then
         session.taxiOpen = false
     elseif event == "PLAYER_REGEN_ENABLED" then
+        Snapshot.CombatEnded()
         if session.pendingOpen then
             session.pendingOpen = false
             Run()
@@ -2600,6 +2934,7 @@ for _, event in ipairs({
     "ADDON_LOADED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BAG_UPDATE_DELAYED",
     "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED",
     "TAXIMAP_OPENED", "TAXIMAP_CLOSED", "TAXI_NODE_STATUS_CHANGED", "PLAYER_REGEN_ENABLED",
+    "PLAYER_EQUIPMENT_CHANGED", "QUEST_TURNED_IN", "SKILL_LINES_CHANGED", "PLAYER_LEVEL_UP",
 }) do
     pcall(events.RegisterEvent, events, event)
 end
@@ -2620,5 +2955,7 @@ local function Command(message)
     Run()
 end
 
+-- One command, two names: /wowchar and /toawowchar do the same.
 SLASH_WOWCHAR1 = "/wowchar"
+SLASH_WOWCHAR2 = "/toawowchar"
 SlashCmdList["WOWCHAR"] = Command

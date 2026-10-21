@@ -59,13 +59,13 @@ if scenario == "bare" then
     Env.load()
     out()
     emit("chat", chat())
-    emit("db", WowcharExportDB or {})
+    emit("db", toawowcharDB or {})
 
 elseif scenario == "full" then
     local g = full()
     Env.useTimers()
     Env.load()
-    Env.fire("ADDON_LOADED", "WowcharExport")
+    Env.fire("ADDON_LOADED", "toawowchar")
     open_windows(g)
     out()
     emit("chat", chat())
@@ -91,18 +91,18 @@ elseif scenario == "quests-cache" then
     g.quests.ids = { 10, 20, 30 }
     Env.load()
     out("session1")
-    local saved = WowcharExportDB
+    local saved = toawowcharDB
     Env.relog()
     Env.now = Env.now + 7200
-    WowcharExportDB = saved
+    toawowcharDB = saved
     local g2 = full()
     g2.quests.ids = {}
     Env.load()
-    Env.fire("ADDON_LOADED", "WowcharExport")
+    Env.fire("ADDON_LOADED", "toawowchar")
     out("session2-empty")
     g2.quests.ids = { 20, 40 }
     out("session2-filled")
-    emit("db", WowcharExportDB)
+    emit("db", toawowcharDB)
 
 elseif scenario == "quests-missing-function" then
     local g = full()
@@ -123,11 +123,11 @@ elseif scenario == "quests-cap" then
 elseif scenario == "savedvars" then
     -- The saved variable is nil, a string, a number, true, or a table with damaged records.
     local g = full()
-    if variant == "string" then WowcharExportDB = "garbage"
-    elseif variant == "number" then WowcharExportDB = 5
-    elseif variant == "true" then WowcharExportDB = true
+    if variant == "string" then toawowcharDB = "garbage"
+    elseif variant == "number" then toawowcharDB = 5
+    elseif variant == "true" then toawowcharDB = true
     elseif variant == "damaged" then
-        WowcharExportDB = {
+        toawowcharDB = {
             Forever = {
                 Thor = {
                     bank = { at = "yesterday", items = { 1, 2 } },
@@ -145,12 +145,12 @@ elseif scenario == "savedvars" then
             ["Other"] = "no",
         }
     elseif variant == "realm-not-table" then
-        WowcharExportDB = { Forever = 5 }
+        toawowcharDB = { Forever = 5 }
     end
     Env.load()
-    Env.fire("ADDON_LOADED", "WowcharExport")
+    Env.fire("ADDON_LOADED", "toawowchar")
     out()
-    emit("db-type", type(WowcharExportDB))
+    emit("db-type", type(toawowcharDB))
 
 elseif scenario == "bank-cache" then
     -- The bank read in one session shows as cache in the next, a new read replaces it,
@@ -169,10 +169,10 @@ elseif scenario == "bank-cache" then
     emit("chat-closed", chat())
     world.open = false
     out("session1")
-    local saved = WowcharExportDB
+    local saved = toawowcharDB
     Env.relog()
     Env.now = Env.now + 3 * 86400 + 60
-    WowcharExportDB = saved
+    toawowcharDB = saved
     Env.installContainers(world)
     Env.load()
     out("session2-cache")
@@ -192,7 +192,7 @@ elseif scenario == "bank-cache" then
     emit("chat-same-again", chat())
     Env.run("reset")
     emit("chat-reset", chat())
-    emit("db-after-reset", WowcharExportDB)
+    emit("db-after-reset", toawowcharDB)
     -- after the reset the window is not opened and the bank is not seen
     out("after-reset")
 
@@ -393,10 +393,10 @@ elseif scenario == "legacy-cache" then
     local g = full()
     Env.load()
     out("session1")
-    local saved = WowcharExportDB
+    local saved = toawowcharDB
     Env.relog()
     Env.now = Env.now + 90
-    WowcharExportDB = saved
+    toawowcharDB = saved
     local g2 = full()
     for _, l in pairs(g2.traits.legacy) do l.config = nil end
     Env.load()
@@ -425,7 +425,7 @@ elseif scenario == "window" then
     Env.load()
     open_windows(g)
     local text = Env.run()
-    local f = Env.frameNamed("WowcharExportFrame")
+    local f = Env.frameNamed("toawowcharFrame")
     emit("export-length", { #text })
     emit("window", Env.windowText())
     emit("frame", {
@@ -466,7 +466,7 @@ elseif scenario == "window-buttons" then
     select.scripts.OnClick(select)
     emit("select-all", { Env.editBox.highlighted, Env.editBox.focused })
     close.scripts.OnClick(close)
-    emit("close", { Env.frameNamed("WowcharExportFrame").shown, Env.editBox.focused })
+    emit("close", { Env.frameNamed("toawowcharFrame").shown, Env.editBox.focused })
 
 elseif scenario == "bounds" then
     -- One value outside the server's bounds (ADDON_BOUNDS) in each section: its row is
