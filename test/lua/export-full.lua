@@ -1,9 +1,14 @@
 -- One complete, deterministic export from the real addon code with stubbed game
 -- data: equipped items with links (and one without), bags, the bank and the
--- warband bank, professions, a spec. Prints the text /wowchar makes; the test
--- compares it with app/test/fixtures/addon-export-v2.txt and decodes it on the
--- server side. Run from the repository root.
+-- warband bank, professions with recipes, a spec, and every section of format 3
+-- (completed quests, quest log, reputation, money and XP, talents, Legacy, flight
+-- paths, the season's PvP rank, class spells), some live and some from a cache of an
+-- earlier session. Prints the text /wowchar makes; the test compares it with
+-- app/test/fixtures/addon-export-v3.txt and decodes it on the server side. Run from
+-- the repository root. To make the fixture again after a deliberate change:
+--     lua app/test/lua/export-full.lua > app/test/fixtures/addon-export-v3.txt
 local Env = dofile("app/test/lua/wow-env.lua")
+local World = dofile("app/test/lua/world.lua")
 
 GetRealmName = function() return "Argent Dawn" end
 UnitName = function() return "Thorin" end
@@ -19,15 +24,19 @@ local ids = { [1] = 12640, [2] = 18404, [16] = 19019, [15] = 13340 } -- 15: no l
 GetInventoryItemID = function(_, slot) return ids[slot] end
 GetInventoryItemLink = function(_, slot) return links[slot] end
 
-GetProfessions = function() return 1, nil, 3 end
-GetProfessionInfo = function(index)
-    if index == 1 then return "Blacksmithing", nil, 225, 300, nil, nil, 164 end
-    return "Zul\195\182te |cffff0000\"Bergbau\"|r", nil, 10, 75, nil, nil, 186
-end
 C_SpecializationInfo = {
     GetSpecialization = function() return 1 end,
     GetSpecializationInfo = function() return 71, "Arms" end,
 }
+
+-- Every section can be read (small data), then the professions are this character's own.
+local g = World.full()
+g.trade.professions = {
+    { name = "Blacksmithing", rank = 225, maxRank = 300, line = 164 },
+    { name = "Zul\195\182te |cffff0000\"Bergbau\"|r", rank = 10, maxRank = 75, line = 186 },
+}
+g.player.rested = 250000
+g.quests.ids = { 4, 8, 15, 16, 23, 42, 1001, 1002 }
 
 local world = {
     open = false,
@@ -38,6 +47,21 @@ local world = {
 }
 Env.installContainers(world)
 Env.load()
+
+-- An earlier session read the Blacksmithing recipes: they are in the cache, this
+-- session did not open that window. (The cache is the saved variable, kept by the client.)
+toawowcharDB = {
+    ["Argent Dawn"] = {
+        Thorin = {
+            v = 1,
+            recipes = {
+                [164] = { at = 1791913600, name = "Blacksmithing", recipes = { [2663] = { { 2840, 1 } }, [2662] = { { 2840, 2 }, { 2589, 1 } } } },
+            },
+        },
+    },
+}
+
 world.open = true
 Env.fire("BANKFRAME_OPENED")
+Env.fire("TAXIMAP_OPENED")
 print(Env.run())
