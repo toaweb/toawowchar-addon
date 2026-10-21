@@ -65,6 +65,16 @@ local PREFIX = "WOWCHAR:" .. FORMAT_VERSION .. ":"
 -- app/shared/addon-export-format.ts; a test compares the two). The window shows
 -- the size; a longer text drops the lowest-priority sections (see Run).
 local MAX_EXPORT_LENGTH = 131072
+-- The largest request body the two import routes take (ADDON_BODY_MAX in
+-- server/utils/request-body.ts: MAX_EXPORT_LENGTH plus 16 KiB for the JSON escapes;
+-- a test compares the two). The browser sends the pasted text as {"export": text},
+-- which writes every " and \ of it as two bytes, so a text under MAX_EXPORT_LENGTH
+-- can still make a body over this. The drop in Run keeps the body, not only the text,
+-- inside it.
+local ADDON_BODY_MAX = 147456
+-- The bytes around the text in that body: {"export":""} is 13; a few more for a
+-- client that adds a space or a line break.
+local BODY_WRAPPER = 16
 local CACHE_VERSION = 1
 
 -- The caps on every list. The server refuses a list over its cap (ADDON_LIST_CAPS
@@ -91,6 +101,34 @@ local CAPS = {
     classSpells = 400,
 }
 
+-- The bounds on every number and text the server checks (ADDON_BOUNDS in
+-- app/server/utils/addon-export.ts; a test compares the two tables name by name).
+-- The server refuses the WHOLE export when one value is outside its bound, so every
+-- reader below checks its values against these numbers and LEAVES OUT the row (or
+-- the field, when it is optional) that does not fit; a section that cannot be made
+-- becomes missing with a reason from REASONS. One odd value therefore never makes
+-- the server refuse a paste.
+local BOUNDS = {
+    id = 2147483647,            -- item, spell, quest, faction, recipe, trait and flight path ids (a 32-bit signed integer)
+    reagentCount = 9999,        -- the count of one reagent in a recipe
+    traitRank = 255,            -- the rank of a trait node
+    counter = 1000000000,       -- XP, standing and its floor and ceiling, objective counts, Legacy points
+    money = 10000000000000,     -- copper
+    level = 255,
+    reaction = 20,              -- the reaction of a reputation row (1 Hated to 8 Exalted in the game)
+    honorRank = 1000,           -- seasonRank and seasonMax
+    hiddenQuests = 1000,        -- quests the log has that could not be listed
+    count = 1000000,            -- the optional counts: region id, class id, a profession's skill line, rank and max rank
+    timeMin = 1000000000,       -- unix seconds, 2001-09-09
+    timeMax = 4102444800,       -- 2100-01-01
+    characterName = 64,         -- text lengths, in bytes here (the server counts characters, which are never more)
+    realm = 100,
+    classFile = 32,
+    specName = 50,
+    portal = 32,
+    professionName = 64,
+}
+
 -- Why a section is missing. Codes, not text. The server accepts exactly these
 -- (MISSING_REASONS in app/shared/addon-sections.ts; a test compares the lists).
 local REASONS = {
@@ -114,9 +152,9 @@ local MAX_BONUS_IDS = 32
 local MAX_GEMS = 4
 -- Item ids, enchant ids and so on are whole numbers that fit a 32-bit signed
 -- integer (the server's MAX_ITEM_ID); anything else in an item string is ignored.
-local MAX_ID = 2147483647
-local MAX_REAGENT_COUNT = 9999
-local MAX_TRAIT_RANK = 255
+local MAX_ID = BOUNDS.id
+local MAX_REAGENT_COUNT = BOUNDS.reagentCount
+local MAX_TRAIT_RANK = BOUNDS.traitRank
 -- The honor system's rank is the renown level of this major faction (Forever,
 -- Blizzard_UIPanels_Game/Camelot/PVPRankFrame.lua:1 and :91).
 local PVP_RANK_FACTION_ID = 2800
@@ -186,6 +224,34 @@ local function Int(value)
     return nil
 end
 
+-- A whole number between min and max, or nil (also for a value outside them).
+local function InRange(value, min, max)
+    local n = Int(value)
+    if n and n >= min and n <= max then
+        return n
+    end
+    return nil
+end
+
+-- A unix time the server accepts (BOUNDS.timeMin to BOUNDS.timeMax), or nil.
+local function CleanTime(value)
+    return InRange(value, BOUNDS.timeMin, BOUNDS.timeMax)
+end
+
+-- A count from the game for a row: 0 when the game gave none (nil or not a whole
+-- number), the number when it is between 0 and `max`, and nil when it is a number
+-- outside that: the caller then leaves the row out.
+local function CountOrZero(value, max)
+    local n = Int(value)
+    if n == nil then
+        return 0
+    end
+    if n < 0 or n > max then
+        return nil
+    end
+    return n
+end
+
 -- A string for the export: control characters become spaces, the ends are
 -- trimmed and the text is cut at `max` bytes on a character boundary. nil when
 -- the value is not a string (or is hidden).
@@ -212,6 +278,20 @@ local function CleanText(value, max)
         text = text:sub(1, n)
     end
     return text
+end
+
+-- A text for an optional identity field: the string itself when it is between 1
+-- and `max` bytes with no control character, else nil (the key is left out; the
+-- server never gets a cut name or realm, which would be a different one).
+local function Fit(value, max)
+    if IsSecret(value) then
+        secretSeen = true
+        return nil
+    end
+    if type(value) == "string" and #value >= 1 and #value <= max and not value:find("[%z\1-\31\127]") then
+        return value
+    end
+    return nil
 end
 
 local function Now()
@@ -267,11 +347,18 @@ end
 -- The sources. A marker is the start of a section table; the readers add the
 -- data keys. `at` is unix seconds; nil leaves the key out.
 local function Live(at)
-    return { source = "live", at = at }
+    -- A live section may have no time; one the server would refuse is left out.
+    return { source = "live", at = CleanTime(at) }
 end
 
+-- A cached section needs a time the server accepts. Without one the section
+-- cannot be made, so it is missing (a missing section carries no data: With).
 local function Cached(at)
-    return { source = "cache", at = at }
+    local stamp = CleanTime(at)
+    if not stamp then
+        return { source = "missing", why = "not_available" }
+    end
+    return { source = "cache", at = stamp }
 end
 
 local function Missing(why)
@@ -279,6 +366,9 @@ local function Missing(why)
 end
 
 local function With(marker, data)
+    if marker.source == "missing" then
+        return marker
+    end
     for key, value in pairs(data) do
         marker[key] = value
     end
@@ -309,14 +399,6 @@ end
 
 local checked = setmetatable({}, { __mode = "k" })
 local fallbackRecord
-
-local function CleanTime(value)
-    local n = Int(value)
-    if n and n >= 1000000000 and n <= 4102444800 then
-        return n
-    end
-    return nil
-end
 
 -- A sorted list of the distinct whole numbers 1..MAX_ID found in a list or set.
 -- Second result: true when cut at `cap`.
@@ -377,7 +459,7 @@ end
 
 local function CleanCount(value)
     local n = Int(value)
-    if n and n >= 0 and n <= 1000000000 then
+    if n and n >= 0 and n <= BOUNDS.counter then
         return n
     end
     return nil
@@ -664,7 +746,8 @@ end
 local function CollectEquipped()
     local equipped = {}
     for slot = 1, LAST_EQUIPMENT_SLOT do
-        local apiId = GetInventoryItemID("player", slot)
+        -- An id the server would refuse leaves the slot out.
+        local apiId = InRange(GetInventoryItemID("player", slot), 1, MAX_ID)
         if apiId and #equipped < MAX_IDS then
             -- The numbers come from the item string; the API id stands in when the
             -- client has no link yet (the item is not cached).
@@ -840,13 +923,16 @@ local function CollectProfessions()
     for position = 1, 6 do
         local index = indexes[position]
         if index and #result < MAX_PROFESSIONS then
-            local name, _, rank, maxRank, _, _, skillLine = GetProfessionInfo(index)
+            local rawName, _, rank, maxRank, _, _, skillLine = GetProfessionInfo(index)
+            -- A name the server would refuse leaves the profession out; the three numbers
+            -- are optional, so one outside its bound is only left out of the row.
+            local name = Fit(rawName, BOUNDS.professionName)
             if name then
                 result[#result + 1] = {
                     name = name,
-                    skillLineId = skillLine,
-                    rank = rank,
-                    maxRank = maxRank,
+                    skillLineId = InRange(skillLine, 0, BOUNDS.count),
+                    rank = InRange(rank, 0, BOUNDS.count),
+                    maxRank = InRange(maxRank, 0, BOUNDS.count),
                 }
             end
         end
@@ -886,15 +972,15 @@ local function CollectRegion()
     local portal
     if GetCVar then
         local ok, value = pcall(GetCVar, "portal")
-        if ok and type(value) == "string" and value ~= "" then
-            portal = value
+        if ok then
+            portal = Fit(value, BOUNDS.portal)
         end
     end
 
     if region then
         return region, nil, nil
     end
-    return nil, id, portal
+    return nil, InRange(id, 0, BOUNDS.count), portal
 end
 
 local function CollectRealm()
@@ -973,18 +1059,15 @@ function Read.Player()
             end
         end
     end
-    put("money", GetMoney, 0, 10000000000000)
-    put("level", UnitLevel, 1, 255, "player")
-    put("xp", UnitXP, 0, 1000000000, "player")
-    put("xpMax", UnitXPMax, 0, 1000000000, "player")
+    put("money", GetMoney, 0, BOUNDS.money)
+    put("level", UnitLevel, 1, BOUNDS.level, "player")
+    put("xp", UnitXP, 0, BOUNDS.counter, "player")
+    put("xpMax", UnitXPMax, 0, BOUNDS.counter, "player")
     if GetXPExhaustion then
         local ok, value = pcall(GetXPExhaustion)
         if ok then
-            -- nil means "not rested".
-            section.rested = Int(value) or 0
-            if section.rested < 0 or section.rested > 1000000000 then
-                section.rested = nil
-            end
+            -- nil means "not rested". A value outside the bound is left out.
+            section.rested = InRange(value or 0, 0, BOUNDS.counter)
         end
     end
     if not any then
@@ -1092,12 +1175,17 @@ function Read.QuestLog()
                                 break
                             end
                             if type(objective) == "table" then
-                                objectives[#objectives + 1] = {
-                                    text = CleanText(objective.text, CAPS.objectiveText) or "",
-                                    have = math.max(0, math.min(Int(objective.numFulfilled) or 0, 1000000000)),
-                                    need = math.max(0, math.min(Int(objective.numRequired) or 0, 1000000000)),
-                                    done = objective.finished and true or false,
-                                }
+                                -- A count outside 0..BOUNDS.counter leaves that objective out.
+                                local have = CountOrZero(objective.numFulfilled, BOUNDS.counter)
+                                local need = CountOrZero(objective.numRequired, BOUNDS.counter)
+                                if have and need then
+                                    objectives[#objectives + 1] = {
+                                        text = CleanText(objective.text, CAPS.objectiveText) or "",
+                                        have = have,
+                                        need = need,
+                                        done = objective.finished and true or false,
+                                    }
+                                end
                             end
                         end
                     end
@@ -1113,7 +1201,7 @@ function Read.QuestLog()
     end
     local hidden = 0
     if total and total > seen then
-        hidden = math.min(total - seen, 1000)
+        hidden = math.min(total - seen, BOUNDS.hiddenQuests)
     end
     return With(Live(nil), { quests = quests, hidden = hidden })
 end
@@ -1178,7 +1266,12 @@ function Read.Reputation()
             local floor = Int(d.currentReactionThreshold)
             local ceiling = Int(d.nextReactionThreshold)
             local name = CleanText(d.name, CAPS.nameText)
-            if reaction and standing and floor and ceiling and name and name ~= "" then
+            -- A row with a value outside the server's bounds is left out (and not counted).
+            if reaction and standing and floor and ceiling and name and name ~= ""
+                and reaction >= 0 and reaction <= BOUNDS.reaction
+                and standing >= -BOUNDS.counter and standing <= BOUNDS.counter
+                and floor >= -BOUNDS.counter and floor <= BOUNDS.counter
+                and ceiling >= -BOUNDS.counter and ceiling <= BOUNDS.counter then
                 if #out >= CAPS.factions then
                     cutSections = true
                 else
@@ -1226,15 +1319,19 @@ local function TreeNodes(configID, treeID)
             local rank = Int(info.activeRank)
             local node = Int(nodeId)
             if node and node >= 1 and node <= MAX_ID and rank and rank > 0 then
-                if #nodes >= CAPS.nodesPerTree then
-                    cutSections = true
-                    break
-                end
+                -- The entry is 0 when the node has none; a rank or an entry outside the
+                -- bounds leaves the node out.
                 local entry = 0
                 if type(info.activeEntry) == "table" then
-                    entry = Int(info.activeEntry.entryID) or 0
+                    entry = CountOrZero(info.activeEntry.entryID, MAX_ID)
                 end
-                nodes[#nodes + 1] = { node, math.min(rank, MAX_TRAIT_RANK), entry }
+                if rank <= MAX_TRAIT_RANK and entry then
+                    if #nodes >= CAPS.nodesPerTree then
+                        cutSections = true
+                        break
+                    end
+                    nodes[#nodes + 1] = { node, rank, entry }
+                end
             end
         end
     end
@@ -1318,13 +1415,17 @@ function Read.Legacy(rec, now)
                 local okCurrency, currency = pcall(C_Traits.GetTreeCurrencyInfo, configID, treeId, false)
                 local first = okCurrency and type(currency) == "table" and currency[1] or nil
                 if type(first) == "table" then
-                    spentInTree = CleanCount(first.spentInTree) or 0
+                    -- Points outside the bound are left out of `points` (each is optional);
+                    -- a tree whose own count is outside it is left out.
+                    spentInTree = CountOrZero(first.spentInTree, BOUNDS.counter)
                     if not points then
                         points = Points(CleanCount(first.quantity), CleanCount(first.maxQuantity), CleanCount(first.spent))
                     end
                 end
             end
-            trees[#trees + 1] = { tree = tree, spent = spentInTree, nodes = TreeNodes(configID, treeId) }
+            if spentInTree then
+                trees[#trees + 1] = { tree = tree, spent = spentInTree, nodes = TreeNodes(configID, treeId) }
+            end
         end
     end
 
@@ -1353,13 +1454,11 @@ function Read.Honor()
         return Missing("not_loaded")
     end
     local rank = Int(data.renownLevel)
-    if not rank or rank < 0 or rank > 1000 then
+    if not rank or rank < 0 or rank > BOUNDS.honorRank then
         return Missing("not_available")
     end
-    local maxRank = Int(data.maxLevel)
-    if maxRank and (maxRank < 0 or maxRank > 1000) then
-        maxRank = nil
-    end
+    -- The season's maximum is optional: outside the bound it is left out.
+    local maxRank = InRange(data.maxLevel, 0, BOUNDS.honorRank)
     return With(Live(nil), { seasonRank = rank, seasonMax = maxRank })
 end
 
@@ -1420,17 +1519,20 @@ function Read.Recipes(rec)
     local lines = {}
     local newest = 0
     for line, entry in pairs(rec.recipes) do
-        local recipes = {}
-        for id, reagents in pairs(entry.recipes) do
-            recipes[#recipes + 1] = { id, reagents }
-        end
-        table.sort(recipes, function(a, b) return a[1] < b[1] end)
-        lines[#lines + 1] = { line = line, name = entry.name, at = entry.at, recipes = recipes }
-        if entry.at > newest then
-            newest = entry.at
-        end
-        if entry.cut then
-            cutSections = true
+        -- A profession whose read time the server would refuse is left out.
+        if CleanTime(entry.at) then
+            local recipes = {}
+            for id, reagents in pairs(entry.recipes) do
+                recipes[#recipes + 1] = { id, reagents }
+            end
+            table.sort(recipes, function(a, b) return a[1] < b[1] end)
+            lines[#lines + 1] = { line = line, name = entry.name, at = entry.at, recipes = recipes }
+            if entry.at > newest then
+                newest = entry.at
+            end
+            if entry.cut then
+                cutSections = true
+            end
         end
     end
     if #lines == 0 then
@@ -1582,8 +1684,9 @@ function Capture.Recipes()
                                     local first = type(slot.reagents) == "table" and slot.reagents[1] or nil
                                     local item = type(first) == "table" and Int(first.itemID) or nil
                                     local count = Int(slot.quantityRequired)
-                                    if not skip and item and item >= 1 and item <= MAX_ID and count and count >= 1 then
-                                        reagents[#reagents + 1] = { item, math.min(count, MAX_REAGENT_COUNT) }
+                                    -- A count outside 1..MAX_REAGENT_COUNT leaves that reagent out.
+                                    if not skip and item and item >= 1 and item <= MAX_ID and count and count >= 1 and count <= MAX_REAGENT_COUNT then
+                                        reagents[#reagents + 1] = { item, count }
                                     end
                                 end
                             end
@@ -1743,15 +1846,22 @@ local view = {}
 
 -- Returns the payload table, or nil and a short reason.
 local function BuildPayload()
-    local name = UnitName("player")
-    if not name or name == "" then
+    -- The name is the one value the export cannot do without: a name the server
+    -- would refuse (never a real one, they are 2 to 12 letters) makes no export.
+    local name = Fit(UnitName("player"), BOUNDS.characterName)
+    if not name then
         return nil, "Could not read the character's name."
     end
     local region, regionId, portal = CollectRegion()
 
-    local _, classFile, classId = UnitClass("player")
+    local _, rawClassFile, rawClassId = UnitClass("player")
+    local classFile = Fit(rawClassFile, BOUNDS.classFile)
+    local classId = InRange(rawClassId, 0, BOUNDS.count)
     local _, build, _, interface = GetBuildInfo()
-    local specId, specName = CollectSpec()
+    local specId, rawSpecName = CollectSpec()
+    local specName = Fit(rawSpecName, BOUNDS.specName)
+    local level = InRange(UnitLevel("player"), 1, BOUNDS.level)
+    local realm = Fit(CollectRealm(), BOUNDS.realm)
 
     local now = Now()
     local rec = Cache.Get()
@@ -1807,6 +1917,15 @@ local function BuildPayload()
         classSpells = Section(Read.ClassSpells, professionNames),
     }
 
+    -- The flags and the sections must agree (the server checks it): a bank section
+    -- that could not be made (missing) has no list and is not «seen».
+    if sections.bank.source == "missing" then
+        bank, bankSeen, bankSource = {}, false, nil
+    end
+    if sections.warbank.source == "missing" then
+        warbank, warbankSeen = {}, false
+    end
+
     local cut = truncated or bankCut or warbankCut or cutSections
 
     -- The window shows the names in the player's language (the first returns).
@@ -1815,26 +1934,26 @@ local function BuildPayload()
         level = UnitLevel("player"),
         race = StringResult(UnitRace, 1) or CollectRace(),
         class = StringResult(UnitClass, 1) or classFile,
-        realm = CollectRealm(),
+        realm = realm,
     }
 
     return {
         format = FORMAT_VERSION,
         addonVersion = ADDON_VERSION,
         client = { build = build, interface = interface },
-        capturedAt = now,
+        capturedAt = CleanTime(now), -- nil (left out) when the clock gives a time the server would refuse
         identity = {
             name = name,
             region = region, -- nil leaves the key out
             regionId = regionId,
             portal = portal,
-            realm = CollectRealm(), -- nil leaves the key out
+            realm = realm, -- nil leaves the key out
             guid = UnitGUID("player"),
             classFile = classFile,
             classID = classId,
             race = CollectRace(), -- nil leaves the key out
             faction = CollectFaction(), -- nil leaves the key out
-            level = UnitLevel("player"),
+            level = level,
             specID = specId,
             specName = specName,
             hardcore = IsHardcore(),
@@ -1987,8 +2106,10 @@ if type(ns) == "table" then
     ns.Serialize = Serialize
     ns.ParseItemString = ParseItemString
     ns.CAPS = CAPS
+    ns.BOUNDS = BOUNDS
     ns.REASONS = REASONS
     ns.MAX_EXPORT_LENGTH = MAX_EXPORT_LENGTH
+    ns.ADDON_BODY_MAX = ADDON_BODY_MAX
 end
 
 ---------------------------------------------------------------------------
@@ -2360,6 +2481,19 @@ end
 -- that is longer than the server takes (docs/addon-export-format-3.md).
 local DROP_ORDER = { "classSpells", "flightPaths", "legacy", "talents", "honor", "reputation", "questLog", "recipes" }
 
+-- The size of the request body the browser makes of a text: the text itself plus the
+-- JSON escape of each " and \ (a backslash more), plus the wrapper. Control characters
+-- cannot be in the text: Encode has written them as \n, \u00XX and so on already.
+local function BodyLength(text)
+    local _, escapes = text:gsub('["\\]', "")
+    return #text + escapes + BODY_WRAPPER
+end
+
+-- True when the text is inside the server's length limit and its body inside the route's.
+local function Fits(text)
+    return #text <= MAX_EXPORT_LENGTH and BodyLength(text) <= ADDON_BODY_MAX
+end
+
 local function Run()
     truncated = false
     local payload, reason = BuildPayload()
@@ -2373,9 +2507,16 @@ local function Run()
         return
     end
 
+    -- A seam for the tests: the sizes at each step, "" for none left out yet.
+    local trace = {}
+    if type(ns) == "table" then
+        ns.fitTrace = trace
+    end
+    trace[1] = { "", #text, BodyLength(text) }
+
     local dropped = {}
     for _, name in ipairs(DROP_ORDER) do
-        if #text <= MAX_EXPORT_LENGTH then
+        if Fits(text) then
             break
         end
         payload.sections[name] = Missing("too_large")
@@ -2384,8 +2525,9 @@ local function Run()
         if not text then
             break
         end
+        trace[#trace + 1] = { name, #text, BodyLength(text) }
     end
-    if not text or #text > MAX_EXPORT_LENGTH then
+    if not text or not Fits(text) then
         UI.Show(nil, payload, "The export is longer than wowchar takes even without the extra sections.")
         return
     end

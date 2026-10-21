@@ -468,12 +468,118 @@ elseif scenario == "window-buttons" then
     close.scripts.OnClick(close)
     emit("close", { Env.frameNamed("WowcharExportFrame").shown, Env.editBox.focused })
 
+elseif scenario == "bounds" then
+    -- One value outside the server's bounds (ADDON_BOUNDS) in each section: its row is
+    -- left out (or its optional field), and everything else is exported, so the server
+    -- never refuses the paste. The values just inside the bound ("Edge") are kept.
+    local BIG = 2000000000
+    local OVER_ID = 2147483648
+    local g = full()
+    -- reputation: reaction 0..20, standing, floor and ceiling within +-1e9
+    local f = g.rep.factions
+    f[#f + 1] = { id = 500, name = "BadReaction", reaction = 21 }
+    f[#f + 1] = { id = 501, name = "BadNegative", reaction = -1 }
+    f[#f + 1] = { id = 502, name = "BadStanding", standing = BIG }
+    f[#f + 1] = { id = 503, name = "BadFloor", floor = -BIG }
+    f[#f + 1] = { id = 504, name = "BadCeiling", ceiling = BIG }
+    f[#f + 1] = { id = 505, name = "Edge", reaction = 20, standing = 1000000000, floor = -1000000000, ceiling = 1000000000 }
+    f[#f + 1] = { id = OVER_ID, name = "BadId" }
+    -- quest log: objective counts 0..1e9, a quest id above the id bound
+    local e = g.log.entries
+    e[#e + 1] = { id = 7010, complete = false, objectives = { { "Edge", 1000000000, 1000000000, false }, { "Over", BIG, 1, false }, { "Under", -1, 1, false }, { "Need", 1, BIG, false } } }
+    e[#e + 1] = { id = OVER_ID, complete = false, objectives = {} }
+    -- player: money, xp and rested out of range are left out, the rest stays
+    g.player.money, g.player.xp, g.player.rested = 100000000000000, -1, BIG
+    -- completed quests, flight paths, spells: an id above the bound is left out
+    g.quests.ids = { 5, 3, OVER_ID, 0, -4, 2147483647 }
+    g.taxi.maps[1414].all[#g.taxi.maps[1414].all + 1] = { OVER_ID, 0 }
+    g.taxi.maps[1414].all[#g.taxi.maps[1414].all + 1] = { 2147483647, 1 }
+    local lines = g.spells.lines
+    lines[#lines + 1] = { name = "Extra", items = { { OVER_ID, 1 }, { 2147483647, 1 } } }
+    g.spells = World.spells({ lines = lines })
+    -- talents: a node with a rank above 255 or an entry above the id bound is left out
+    local nodes = g.traits.trees[1100].nodes
+    nodes[#nodes + 1] = { 20, 256, 1 }
+    nodes[#nodes + 1] = { 21, 1, OVER_ID }
+    nodes[#nodes + 1] = { 22, 255, 2147483647 }
+    nodes[#nodes + 1] = { OVER_ID, 1, 1 }
+    -- Legacy: points beyond 1e9 are left out of `points`, a tree with such a count is left out
+    g.traits.legacy[1187].quantity = BIG
+    g.traits.legacy[1187].spentInTree = BIG
+    -- honor: the season maximum above 1000 is left out
+    g.honor.info = { renownLevel = 4, maxLevel = 1001 }
+    -- professions: a name over 64 bytes leaves the profession out, a rank above 1e6 only the rank
+    local p = g.trade.professions
+    p[#p + 1] = { name = string.rep("x", 65), rank = 1, maxRank = 2, line = 3 }
+    p[1].rank = 2000000
+    -- identity
+    GetRealmName = function() return string.rep("r", 101) end
+    UnitClass = function() return "Warrior", "WARRIOR", 2000000 end
+    C_SpecializationInfo = { GetSpecialization = function() return 1 end, GetSpecializationInfo = function() return 71, string.rep("s", 51) end }
+    GetInventoryItemID = function(_, slot)
+        if slot == 1 then return OVER_ID end
+        if slot == 2 then return 100 end
+        return nil
+    end
+    Env.useTimers()
+    Env.load()
+    -- recipes: a reagent count above 9999 leaves that reagent out, a recipe id above the id bound the recipe
+    g.trade.window = {
+        base = { professionID = 197, professionName = "Tailoring" },
+        filtered = { 1, 2, OVER_ID },
+        recipes = {
+            [1] = { learned = true, reagents = { { 2589, 9999 }, { 2320, 10000 }, { OVER_ID, 1 } } },
+            [2] = { learned = true, reagents = {} },
+        },
+    }
+    Env.fire("TRADE_SKILL_LIST_UPDATE")
+    Env.flushTimers()
+    Env.fire("TAXIMAP_OPENED")
+    out()
+
+elseif scenario == "bounds-honor" then
+    -- The season rank above 1000 makes the section missing (it has no row to leave out).
+    local g = full()
+    g.honor.info = { renownLevel = 1001, maxLevel = 14 }
+    Env.load()
+    out()
+
+elseif scenario == "bounds-identity" then
+    -- A level above 255 is left out of the identity and of the player section; a name longer
+    -- than 64 bytes makes no export at all.
+    local g = full()
+    if variant == "name" then
+        UnitName = function() return string.rep("n", 65) end
+        Env.load()
+        SlashCmdList["WOWCHAR"]()
+        emit("window", Env.windowText())
+        emit("text", { Env.editBox and Env.editBox.text or "" })
+        return
+    end
+    UnitLevel = function() return 300 end
+    GetCurrentRegion = function() return 2000000 end
+    GetCVar = function() return string.rep("p", 33) end
+    Env.load()
+    out()
+
+elseif scenario == "bounds-time" then
+    -- A clock the server would refuse (before 2001): the export has no capturedAt, live
+    -- sections have no time, and what needs a time (a recipe line, a cached section) is missing.
+    local g = full()
+    Env.now = 5
+    Env.useTimers()
+    Env.load()
+    open_windows(g)
+    out()
+
 elseif scenario == "constants" then
-    -- What the addon repeats from the server: the caps, the reason codes and the length limit.
+    -- What the addon repeats from the server: the caps, the bounds, the reason codes and the length limit.
     Env.load()
     emit("caps", Env.ns.CAPS)
+    emit("bounds", Env.ns.BOUNDS)
     emit("reasons", Env.ns.REASONS)
     emit("max", { Env.ns.MAX_EXPORT_LENGTH })
+    emit("bodymax", { Env.ns.ADDON_BODY_MAX })
 
 elseif scenario == "unknown-command" then
     -- Anything but "reset" opens the window.

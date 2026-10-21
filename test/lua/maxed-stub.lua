@@ -1,6 +1,6 @@
 -- A maxed character, for measuring the export and checking the caps. Usage (from
 -- the repository root):
---     lua app/test/lua/maxed-stub.lua [maxed|saturated]
+--     lua app/test/lua/maxed-stub.lua [maxed|saturated|quotes]
 -- Prints the text /wowchar makes, one line. All numbers are fixed (a small
 -- deterministic generator), so the size is the same on every run.
 --
@@ -16,6 +16,10 @@
 --   60 flight paths and 150 class spells.
 -- "saturated" fills every list to its cap: more than the server's total length, so
 -- the addon has to leave sections out.
+-- "quotes" is the maxed character with objective texts and faction names made only of `"` and `\`
+-- (255 and 100 characters, the longest the caps allow). Each of those is two characters in the
+-- export and four in the request body ({"export": text}), so the text stays under the 128 KiB
+-- limit while the body goes over ADDON_BODY_MAX: the addon has to leave sections out for the body.
 local scenario = arg[1] or "maxed"
 local Env = dofile("app/test/lua/wow-env.lua")
 local World = dofile("app/test/lua/world.lua")
@@ -26,9 +30,13 @@ local function rnd(n) -- 1..n
     return seed % n + 1
 end
 
-local maxed = scenario == "maxed"
+-- Only `"` and `\`: 255 of them are 510 characters in the export.
+local function quoted(length) return ('"\\'):rep(length):sub(1, length) end
+
+local quotes = scenario == "quotes"
+local maxed = scenario == "maxed" or quotes
 local N = maxed and {
-    quests = 1500, log = 25, objectives = 3, factions = 80, talents = 70, legacyNodes = 60, flights = 60, spells = 150,
+    quests = 1500, log = 25, objectives = 3, factions = quotes and 120 or 80, talents = 70, legacyNodes = 60, flights = 60, spells = 150,
     lines = { { "Blacksmithing", 164, 260 }, { "Tailoring", 197, 260 }, { "First Aid", 129, 12 }, { "Cooking", 185, 120 }, { "Fishing", 356, 6 } },
     reagents = nil, -- 1..6 by position
 } or {
@@ -69,7 +77,7 @@ do
         local objectives = {}
         for j = 1, N.objectives do
             local length = maxed and (28 + rnd(46)) or 255
-            local text = ("Kill creatures of kind number %d in area %d "):rep(10):sub(1, length)
+            local text = quotes and quoted(255) or ("Kill creatures of kind number %d in area %d "):rep(10):sub(1, length)
             objectives[j] = { text, rnd(10), 10, false }
         end
         entries[#entries + 1] = { id = 1000 + rnd(25000) + i, complete = i % 5 == 0, objectives = objectives }
@@ -81,7 +89,7 @@ end
 do
     local factions = { { id = 1, name = "Classic", header = true } }
     for i = 1, N.factions do
-        factions[#factions + 1] = { id = 100 + i * 3, name = maxed and ("Faction of the Valley %d"):format(i):sub(1, 14 + rnd(10)) or ("N"):rep(100),
+        factions[#factions + 1] = { id = 100 + i * 3, name = quotes and quoted(100) or maxed and ("Faction of the Valley %d"):format(i):sub(1, 14 + rnd(10)) or ("N"):rep(100),
             reaction = rnd(8), standing = rnd(40000) - 6000, floor = -6000 + rnd(1000), ceiling = 3000 + rnd(40000), parent = 1 }
     end
     World.reputation({ factions = factions })
@@ -187,3 +195,12 @@ Env.fire("TAXIMAP_OPENED")
 Env.chat = {}
 
 print(Env.run())
+-- The sizes at each step of the drop (the addon's seam), for the scenario that is about them:
+-- "left out:text length:body length;..." with "-" for nothing left out yet.
+if quotes then
+    local steps = {}
+    for i, step in ipairs(Env.ns.fitTrace) do
+        steps[i] = (step[1] == "" and "-" or step[1]) .. ":" .. step[2] .. ":" .. step[3]
+    end
+    print(table.concat(steps, ";"))
+end

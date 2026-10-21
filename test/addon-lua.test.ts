@@ -5,7 +5,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { ADDON_VERSION } from '../shared/addon-release'
 import { MAX_ENCODED_LENGTH } from '../shared/addon-export-format'
 import { MISSING_REASONS, SECTION_NAMES } from '../shared/addon-sections'
-import { ADDON_LIST_CAPS, MAX_BONUS_IDS_PER_ITEM, MAX_IDS_PER_ARRAY, decodeAddonExport, obtainedItemIds } from '../server/utils/addon-export'
+import { ADDON_BOUNDS, ADDON_LIST_CAPS, MAX_BONUS_IDS_PER_ITEM, MAX_IDS_PER_ARRAY, decodeAddonExport, obtainedItemIds } from '../server/utils/addon-export'
+import { ADDON_BODY_MAX } from '../server/utils/request-body'
 import type { AddonExport } from '../server/utils/addon-export'
 
 // The addon's Lua, checked with Lua 5.1 in Docker (the WoW client's Lua). Opt-in
@@ -463,6 +464,89 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
       expect(ids).toBe(MAX_IDS_PER_ARRAY)
       expect(professions).toBe(32)
       expect(json(m, 'max')).toEqual([MAX_ENCODED_LENGTH])
+    })
+
+    it('the route body limit is the server\'s: ADDON_BODY_MAX (= MAX_ENCODED_LENGTH + the 16 KiB for the JSON escapes)', () => {
+      expect(json(scn('constants'), 'bodymax')).toEqual([ADDON_BODY_MAX])
+      expect(ADDON_BODY_MAX).toBe(MAX_ENCODED_LENGTH + 16 * 1024)
+    })
+  })
+
+  describe('the bounds on numbers and texts', () => {
+    it('are the server\'s (ADDON_BOUNDS), name by name: a number added or changed on one side fails here', () => {
+      const bounds = json(scn('constants'), 'bounds')
+      expect(bounds).toEqual({ ...ADDON_BOUNDS })
+    })
+
+    it('a value outside a bound leaves its row (or optional field) out, everything else is exported, and the strict server takes the text', () => {
+      const m = scn('bounds')
+      const j = exportOf(m)
+      const p = decoded(m) // decodeAddonExport refuses the whole text on one bad value
+      const s = j.sections
+
+      // reputation: reaction -1 and 21, standing, floor and ceiling beyond +-1e9, an id above the bound: the rows are gone; the edge row stays
+      expect(s.reputation.factions.map((f: any[]) => f[0])).toEqual([72, 69, 169, 505])
+      expect(s.reputation.factions[3]).toEqual([505, 20, 1000000000, -1000000000, 1000000000, 'Edge'])
+      // quest log: the objectives with a count outside 0..1e9 are gone, the quest and its edge objective stay, the quest with a too big id is not listed
+      const q = s.questLog.quests.find((x: any) => x.id === 7010)
+      expect(q.objectives).toEqual([{ text: 'Edge', have: 1000000000, need: 1000000000, done: false }])
+      expect(s.questLog.quests.map((x: any) => x.id)).toEqual([7001, 7002, 7010])
+      // player: money, xp and rested outside their bounds are left out; level and xpMax stay
+      expect(s.player).toEqual({ source: 'live', level: 60, xpMax: 5000 })
+      // ids above the bound are not listed; the id at the bound is
+      expect(s.questsDone.ids).toEqual([3, 5, 2147483647])
+      expect(s.flightPaths.ids).toEqual([11, 12, 14, 2147483647])
+      expect(s.classSpells.ids).toEqual([78, 772, 6603, 2147483647])
+      // talents: rank 256 and an entry above the id bound are gone, rank 255 and the entry at the bound stay
+      expect(s.talents.trees[0].nodes).toEqual([[10, 2, 100], [11, 1, 0], [22, 255, 2147483647]])
+      // Legacy: the tree whose spent count is beyond 1e9 is left out, and `available` from the same read
+      expect(s.legacy.trees.map((t: any) => t.tree)).toEqual([1188, 1189])
+      expect(s.legacy.points).toEqual({ cap: 50, spent: 20 })
+      // honor: the season maximum above 1000 is left out, the rank stays
+      expect(s.honor).toEqual({ source: 'live', seasonRank: 4 })
+      // recipes: the reagent with a count of 10000 is gone, the one with 9999 stays; the recipe with a too big id is not listed
+      expect(s.recipes.lines[0].recipes).toEqual([[1, [[2589, 9999]]], [2, []]])
+      // professions: a name over 64 bytes drops the profession, a rank above 1e6 only the rank
+      expect(j.professions).toEqual([
+        { name: 'Tailoring', skillLineId: 197, maxRank: 300 },
+        { name: 'First Aid', skillLineId: 129, rank: 100, maxRank: 150 },
+      ])
+      // equipped: an item id above the bound leaves the slot out
+      expect(j.equipped.map((e: any) => [e.slot, e.itemId])).toEqual([[2, 100]])
+      // identity: a realm over 100 bytes, a spec name over 50 and a class id above 1e6 are left out (all optional)
+      for (const key of ['realm', 'specName', 'classID']) expect(j.identity, key).not.toHaveProperty(key)
+      expect(j.identity).toMatchObject({ name: 'Thor', classFile: 'WARRIOR', level: 60, region: 'EU' })
+      expect(p.identity.realm).toBeUndefined()
+      expect(p.sections!.sources.reputation.source).toBe('live')
+    })
+
+    it('a season rank above 1000 makes the honor section missing (there is no row to leave out), and the rest decodes', () => {
+      const m = scn('bounds-honor')
+      expect(exportOf(m).sections.honor).toEqual({ source: 'missing', why: 'not_available' })
+      expect(decoded(m).sections!.sources.honor).toEqual({ source: 'missing', why: 'not_available' })
+    })
+
+    it('a level above 255, a region id above 1e6 and a portal over 32 bytes are left out of the identity; the player section keeps its other numbers', () => {
+      const m = scn('bounds-identity')
+      const j = exportOf(m)
+      for (const key of ['level', 'region', 'regionId', 'portal']) expect(j.identity, key).not.toHaveProperty(key)
+      expect(j.sections.player).toEqual({ source: 'live', money: 123456789, rested: 0, xp: 1000, xpMax: 5000 })
+      expect(decoded(m).identity.level).toBeUndefined()
+    })
+
+    it('a character name over 64 bytes makes no export: the window says so and the text box stays empty', () => {
+      const m = scn('bounds-identity', 'name')
+      expect(plain(m, 'window').join(' ')).toContain('Could not read the character\'s name.')
+      expect(json(m, 'text')).toEqual([''])
+    })
+
+    it('a clock the server would refuse (before 2001): no capturedAt, no times on live sections, a recipe line and a cached section with no valid time are missing; the server takes it', () => {
+      const m = scn('bounds-time')
+      const j = exportOf(m)
+      expect(j).not.toHaveProperty('capturedAt')
+      for (const name of ['questsDone', 'legacy', 'flightPaths']) expect(j.sections[name], name).not.toHaveProperty('at')
+      expect(j.sections.recipes).toEqual({ source: 'missing', why: 'open_profession_window' })
+      expect(decoded(m).capturedAt).toBeUndefined()
     })
   })
 
@@ -955,6 +1039,58 @@ describe.skipIf(!haveImage)('WowcharExport.lua (Lua 5.1)', () => {
       expect(dropped.join()).toBe([...dropped].sort((a, b) => Number(b) - Number(a)).join())
       expect(j.truncated).toBe(true)
       expect(decodeAddonExport(text).sections!.sources.recipes.why).toBe('too_large')
+    })
+
+    it('the saturated export, wrapped as the route body { export: text }, is within ADDON_BODY_MAX in UTF-8 bytes (true, but weak: this stub has almost no quotes; the next test is the one that reaches the limit)', () => {
+      const text = script('maxed-stub', 'saturated')[0]!
+      const body = Buffer.byteLength(JSON.stringify({ export: text }), 'utf8')
+      const escapes = body - Buffer.byteLength(text, 'utf8')
+      // eslint-disable-next-line no-console
+      console.info(`saturated export body: ${body} bytes, ${escapes} of them escapes; ADDON_BODY_MAX ${ADDON_BODY_MAX}`)
+      expect(body).toBeLessThanOrEqual(ADDON_BODY_MAX)
+      // and the same for the maxed character
+      expect(Buffer.byteLength(JSON.stringify({ export: line }), 'utf8')).toBeLessThanOrEqual(ADDON_BODY_MAX)
+    })
+
+    it('a text of quotes and backslashes: under the 128 KiB limit but over the body limit, so the addon leaves sections out until the BODY fits, and the server takes it', () => {
+      // test/lua/maxed-stub.lua quotes: objective texts (255) and faction names (100) of only " and \,
+      // two characters each in the export and four in the body
+      const [text, trace] = script('maxed-stub', 'quotes') as [string, string]
+      const steps = trace.split(';').map((x) => {
+        const [name, length, body] = x.split(':') as [string, string, string]
+        return { name, length: Number(length), body: Number(body) }
+      })
+      const first = steps[0]!
+      const last = steps[steps.length - 1]!
+      // eslint-disable-next-line no-console
+      console.info(`quotes stub, body bytes by step: ${steps.map(s => `${s.name} ${s.length}/${s.body}`).join(', ')}; ADDON_BODY_MAX ${ADDON_BODY_MAX}`)
+
+      // before any drop: the text is inside the length limit, the body is not (the old check, on the text alone, would have let it through to a 413)
+      expect(first.name).toBe('-')
+      expect(first.length).toBeLessThanOrEqual(MAX_ENCODED_LENGTH)
+      expect(first.body).toBeGreaterThan(ADDON_BODY_MAX)
+      // every step but the last was still over the body limit while the text was not over its own
+      for (const s of steps.slice(0, -1)) {
+        expect(s.length).toBeLessThanOrEqual(MAX_ENCODED_LENGTH)
+        expect(s.body).toBeGreaterThan(ADDON_BODY_MAX)
+      }
+      expect(last.body).toBeLessThanOrEqual(ADDON_BODY_MAX)
+      expect(steps.length).toBeGreaterThan(1)
+
+      // what the browser sends, measured with the real JSON.stringify in UTF-8 bytes
+      const body = Buffer.byteLength(JSON.stringify({ export: text }), 'utf8')
+      expect(text.length).toBe(last.length)
+      expect(body).toBeLessThanOrEqual(ADDON_BODY_MAX)
+      expect(body).toBeLessThanOrEqual(last.body) // the addon's number is never below the real one
+      expect(last.body - body).toBeLessThanOrEqual(16) // and not far above it (the wrapper's few bytes)
+      expect(text.length).toBeLessThanOrEqual(MAX_ENCODED_LENGTH)
+
+      // the left-out sections are a prefix of the drop order, marked too_large, and the strict server decodes the text
+      const dropped = steps.slice(1).map(s => s.name)
+      const j = parseExport(text)
+      for (const name of dropped) expect(j.sections[name]).toMatchObject({ source: 'missing', why: 'too_large' })
+      expect(j.sections.questLog.source).toBe('live') // the drop stopped as soon as the body fitted
+      expect(decodeAddonExport(text).sections!.sources.reputation.why).toBe('too_large')
     })
   })
 })
