@@ -1,0 +1,124 @@
+{
+  "_about": [
+    "The export contract of the toawowchar addon, as wowchar owns it. Do not change a value here on its own:",
+    "toaweb/toawowchar owns these values (app/shared/addon-sections.ts, app/shared/addon-export-format.ts,",
+    "app/server/utils/addon-export.ts, app/server/utils/request-body.ts, app/shared/quest-keys.ts). This is a copy, so the",
+    "addon's tests can run without the wowchar app. A change to a number here goes as two pull requests, one per",
+    "repository, and the web-app session is told first (see AGENTS.md). wowchar tests its real decoder against",
+    "this repository's example exports (dist/examples/), which is the check that the two sides agree."
+  ],
+  "copiedFrom": {
+    "repository": "toaweb/toawowchar",
+    "commit": "dfba6fcce0e71660e8c12f90a18f41d9ecdb4b4a",
+    "date": "2026-10-22",
+    "note": "Values read by importing the modules above at that commit; the 'decoder' block is not exported by wowchar and was copied from the constants in app/server/utils/addon-export.ts."
+  },
+  "exportFormat": {
+    "currentFormat": 3,
+    "prefix": "WOWCHAR:3:",
+    "maxEncodedLength": 131072,
+    "addonBodyMax": 147456,
+    "addonBodySlack": 16384
+  },
+  "sectionNames": [
+    "equipped",
+    "bags",
+    "bank",
+    "warbank",
+    "professions",
+    "recipes",
+    "questsDone",
+    "questLog",
+    "reputation",
+    "player",
+    "talents",
+    "legacy",
+    "flightPaths",
+    "honor",
+    "classSpells"
+  ],
+  "sectionSources": [
+    "live",
+    "cache",
+    "missing"
+  ],
+  "missingReasons": [
+    "open_bank",
+    "open_profession_window",
+    "open_flight_map",
+    "not_loaded",
+    "in_combat",
+    "not_available",
+    "too_large"
+  ],
+  "cachedSections": [
+    "equipped",
+    "bags",
+    "bank",
+    "warbank",
+    "professions",
+    "recipes",
+    "questsDone",
+    "player",
+    "legacy",
+    "flightPaths"
+  ],
+  "maxIdsPerArray": 500,
+  "maxBonusIdsPerItem": 32,
+  "listCaps": {
+    "questsDone": 5000,
+    "questLog": 50,
+    "objectivesPerQuest": 12,
+    "objectiveText": 255,
+    "factions": 200,
+    "nameText": 100,
+    "recipeLines": 12,
+    "recipesPerLine": 600,
+    "reagentsPerRecipe": 12,
+    "talentTrees": 4,
+    "nodesPerTree": 150,
+    "legacyTrees": 4,
+    "challenges": 500,
+    "flightPaths": 200,
+    "classSpells": 400
+  },
+  "bounds": {
+    "id": 2147483647,
+    "reagentCount": 9999,
+    "traitRank": 255,
+    "counter": 1000000000,
+    "money": 10000000000000,
+    "level": 255,
+    "reaction": 20,
+    "honorRank": 1000,
+    "hiddenQuests": 1000,
+    "count": 1000000,
+    "timeMin": 1000000000,
+    "timeMax": 4102444800,
+    "characterName": 64,
+    "realm": 100,
+    "classFile": 32,
+    "specName": 50,
+    "portal": 32,
+    "professionName": 64
+  },
+  "decoder": {
+    "maxEquipped": 32,
+    "maxGemsPerItem": 4,
+    "maxProfessions": 32,
+    "maxSlot": 255,
+    "knownRegions": [
+      "US",
+      "KR",
+      "EU",
+      "TW",
+      "CN"
+    ],
+    "raceTokenPattern": "^[A-Za-z]{1,24}$",
+    "factions": [
+      "Alliance",
+      "Horde",
+      "Neutral"
+    ]
+  }
+}

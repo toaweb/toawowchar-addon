@@ -1,8 +1,8 @@
 -- Runs the addon's JSON writer on fixed cases and prints one line per case:
 --   <label>\t<json>        or        <label>\tERROR
--- The Vitest test parses each json with JSON.parse and compares. Run from the
--- repository root: lua app/test/lua/serializer-test.lua
-local Env = dofile("app/test/lua/wow-env.lua")
+-- test/addon-lua.test.mjs parses each json with JSON.parse and compares. Run from the
+-- repository root: lua test/lua/serializer-test.lua
+local Env = dofile("test/lua/wow-env.lua")
 Env.load()
 local Serialize = assert(Env.ns.Serialize, "the addon did not export Serialize")
 

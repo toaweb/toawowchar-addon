@@ -1,0 +1,21 @@
+# Version updates for what the repo builds with (SECURITY standard, section 9). The repository has
+# no npm or Python packages: the tests use Node's built-in runner and the scripts use the standard
+# library. Security updates for github-actions come on their own; docker gets version updates only.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7           # a new release waits a week before it is proposed (security updates do not)
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker"           # test/Dockerfile (node base image, pinned by digest)
+    directory: "/test"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"

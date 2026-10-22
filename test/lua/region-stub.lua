@@ -1,10 +1,10 @@
--- Stubbed run of addon/toawowchar/toawowchar.lua (Lua 5.1, no WoW client).
+-- Stubbed run of toawowchar/toawowchar.lua (Lua 5.1, no WoW client).
 -- Usage: lua region-stub.lua <scenario>   (run from the repository root)
 -- Prints the export text /wowchar makes (one line) for a client that reports its
 -- region in the way the scenario says; the test parses it. A failing scenario
 -- raises, so the exit code is non-zero.
 local scenario = arg[1] or "eu"
-local Env = dofile("app/test/lua/wow-env.lua")
+local Env = dofile("test/lua/wow-env.lua")
 
 if scenario == "eu" then
     GetCurrentRegion = function() return 3 end

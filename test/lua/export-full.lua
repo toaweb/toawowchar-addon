@@ -4,11 +4,11 @@
 -- (completed quests, quest log, reputation, money and XP, talents, Legacy, flight
 -- paths, the season's PvP rank, class spells), some live and some from a cache of an
 -- earlier session. Prints the text /wowchar makes; the test compares it with
--- app/test/fixtures/addon-export-v3.txt and decodes it on the server side. Run from
+-- test/fixtures/export-full.txt and checks it against the contract. Run from
 -- the repository root. To make the fixture again after a deliberate change:
---     lua app/test/lua/export-full.lua > app/test/fixtures/addon-export-v3.txt
-local Env = dofile("app/test/lua/wow-env.lua")
-local World = dofile("app/test/lua/world.lua")
+--     lua test/lua/export-full.lua > test/fixtures/export-full.txt
+local Env = dofile("test/lua/wow-env.lua")
+local World = dofile("test/lua/world.lua")
 
 GetRealmName = function() return "Argent Dawn" end
 UnitName = function() return "Thorin" end

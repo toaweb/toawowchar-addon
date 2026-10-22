@@ -1,6 +1,6 @@
 -- Runs the addon's item string reader on fixed links and prints one line per
 -- case: <label>\t<json of the result, or null>. Run from the repository root.
-local Env = dofile("app/test/lua/wow-env.lua")
+local Env = dofile("test/lua/wow-env.lua")
 Env.load()
 local Parse = assert(Env.ns.ParseItemString, "the addon did not export ParseItemString")
 local Serialize = assert(Env.ns.Serialize)

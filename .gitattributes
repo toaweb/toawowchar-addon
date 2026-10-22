@@ -1,0 +1,3 @@
+# Every text file is LF in the working tree on every machine: the release zip is built from
+# these bytes and must be the same everywhere (scripts/build-zip.py refuses a carriage return).
+* text=auto eol=lf

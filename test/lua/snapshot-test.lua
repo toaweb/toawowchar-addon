@@ -2,18 +2,18 @@
 -- (save, reload, /wowchar), the two slash words and the "no Forever detection by
 -- interface number" checks of addon 0.4.0, on small fixed game data. Usage (from the
 -- repository root):
---     lua app/test/lua/snapshot-test.lua <scenario> [variant]
+--     lua test/lua/snapshot-test.lua <scenario> [variant]
 -- Prints lines `label<TAB>value` like sections-test.lua; the value is an export text
--- or JSON written with the addon's own serializer. addon-lua.test.ts parses them.
+-- or JSON written with the addon's own serializer. test/addon-lua.test.mjs parses them.
 -- The scenario `relog-text` prints only the export text a character gets after a
--- relog; the test compares it with app/test/fixtures/addon-export-relog.txt. To make
+-- relog; the test compares it with test/fixtures/export-relog.txt. To make
 -- the fixture again after a deliberate change (the variant `blind` is the second file):
---     lua app/test/lua/snapshot-test.lua relog-text > app/test/fixtures/addon-export-relog.txt
---     lua app/test/lua/snapshot-test.lua relog-text blind > app/test/fixtures/addon-export-relog-blind.txt
+--     lua test/lua/snapshot-test.lua relog-text > test/fixtures/export-relog.txt
+--     lua test/lua/snapshot-test.lua relog-text blind > test/fixtures/export-relog-blind.txt
 local scenario = arg[1] or "relog"
 local variant = arg[2]
-local Env = dofile("app/test/lua/wow-env.lua")
-local World = dofile("app/test/lua/world.lua")
+local Env = dofile("test/lua/wow-env.lua")
+local World = dofile("test/lua/world.lua")
 
 local T = Env.now
 

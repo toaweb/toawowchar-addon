@@ -1,11 +1,11 @@
 -- A maxed character, for measuring the export and checking the caps. Usage (from
 -- the repository root):
---     lua app/test/lua/maxed-stub.lua [maxed|saturated|quotes]
+--     lua test/lua/maxed-stub.lua [maxed|saturated|quotes]
 -- Prints the text /wowchar makes, one line. All numbers are fixed (a small
 -- deterministic generator), so the size is the same on every run.
 --
 -- "maxed" is a character a Classic-era game can really produce (what the
--- caps of the export are sized from; docs/addon-export-format-3.md):
+-- caps of the export are sized from; wowchar's docs/addon-export-format-3.md):
 --   level 60, 1,500 completed quests (ids spread over 1..30,000),
 --   a full quest log (25 quests, 3 objectives each, texts of 28 to 74 characters),
 --   Blacksmithing and Tailoring with 260 recipes each, First Aid (12), Cooking (120)
@@ -21,8 +21,8 @@
 -- export and four in the request body ({"export": text}), so the text stays under the 128 KiB
 -- limit while the body goes over ADDON_BODY_MAX: the addon has to leave sections out for the body.
 local scenario = arg[1] or "maxed"
-local Env = dofile("app/test/lua/wow-env.lua")
-local World = dofile("app/test/lua/world.lua")
+local Env = dofile("test/lua/wow-env.lua")
+local World = dofile("test/lua/world.lua")
 
 local seed = 12345
 local function rnd(n) -- 1..n

@@ -1,68 +1,88 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { beforeAll, describe, expect, it } from 'vitest'
-import { ADDON_VERSION } from '../shared/addon-release'
-import { MAX_ENCODED_LENGTH } from '../shared/addon-export-format'
-import { ADDON_CACHED_SECTIONS, MISSING_REASONS, SECTION_NAMES } from '../shared/addon-sections'
-import { ADDON_BOUNDS, ADDON_LIST_CAPS, MAX_BONUS_IDS_PER_ITEM, MAX_IDS_PER_ARRAY, decodeAddonExport, obtainedItemIds } from '../server/utils/addon-export'
-import { ADDON_BODY_MAX } from '../server/utils/request-body'
-import type { AddonExport } from '../server/utils/addon-export'
+import { beforeAll, describe, it } from './lib/suite.mjs'
+import { expect } from './lib/expect.mjs'
+import {
+  ADDON_BODY_MAX,
+  ADDON_BOUNDS,
+  ADDON_CACHED_SECTIONS,
+  ADDON_LIST_CAPS,
+  MAX_BONUS_IDS_PER_ITEM,
+  MAX_ENCODED_LENGTH,
+  MAX_IDS_PER_ARRAY,
+  MISSING_REASONS,
+  PREFIX,
+  SECTION_NAMES,
+  decodeAddonExport,
+  obtainedItemIds,
+} from './lib/contract.mjs'
 
-// The addon's Lua, checked with Lua 5.1 in Docker (the WoW client's Lua). Opt-in
-// by presence: skipped when Docker or the image nickblah/lua:5.1-alpine is not
-// there, so `npm test` stays offline. `docker pull nickblah/lua:5.1-alpine` once
-// to enable it. The scripts in test/lua/ fake the WoW API (wow-env.lua) and
-// print what the addon makes; this file checks that output.
-const IMAGE = 'nickblah/lua:5.1-alpine'
-const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+// The addon's Lua, run with Lua 5.1 (the WoW client's Lua). `lua` and `luac` must be on
+// the PATH: scripts/test.sh runs this in the Docker image of test/Dockerfile. There is no
+// skipping: a missing tool fails the suite. The scripts in test/lua/ fake the WoW API
+// (wow-env.lua) and print what the addon makes; this file checks that output.
+//
+// What the wowchar server accepts is checked with test/lib/contract.mjs: a port of the
+// strict shape check of wowchar's decodeAddonExport, with the numbers of test/contract.json
+// (a copy of what wowchar's app/shared/ owns).
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 
-const haveImage = (() => {
-  try {
-    return spawnSync('docker', ['image', 'inspect', IMAGE], { stdio: 'ignore' }).status === 0
-  }
-  catch { return false }
-})()
+const read = rel => readFileSync(`${ROOT}/${rel}`, 'utf8')
+const ADDON_VERSION = /^## Version: (\S+)$/m.exec(read('toawowchar/toawowchar.toc'))[1]
 
-const lua = (args: string[]) =>
-  spawnSync('docker', ['run', '--rm', '-v', `${ROOT}:/w:ro`, '-w', '/w', IMAGE, ...args], { encoding: 'utf8' })
+/** The files the tests pin the addon's output to. UPDATE_FIXTURES=1 writes them again (after a deliberate change). */
+const FIXTURE_DIR = 'test/fixtures'
+const fixture = name => read(`${FIXTURE_DIR}/${name}.txt`).trim()
+function pinned(name, actual) {
+  if (process.env.UPDATE_FIXTURES === '1') writeFileSync(`${ROOT}/${FIXTURE_DIR}/${name}.txt`, `${actual}\n`)
+  return fixture(name)
+}
+
+/** The example exports the release publishes: one for each format the addon emits. */
+const EXAMPLES_DIR = 'dist/examples'
+
+const lua = (args) => {
+  const r = spawnSync(args[0], args.slice(1), { cwd: ROOT, encoding: 'utf8' })
+  if (r.error) throw r.error
+  return r
+}
 
 /** Runs a script in test/lua/ and returns its stdout lines. */
-function script(name: string, ...args: string[]): string[] {
-  const r = lua(['lua', `app/test/lua/${name}.lua`, ...args])
+function script(name, ...args) {
+  const r = lua(['lua', `test/lua/${name}.lua`, ...args])
   expect(r.stderr).toBe('')
   expect(r.status).toBe(0)
   return r.stdout.replace(/\n$/, '').split('\n')
 }
 
-const PREFIX = 'WOWCHAR:3:'
 /** The JSON of an export line; the line must be a format 3 string with no pipe. */
-function parseExport(line: string): any {
+function parseExport(line) {
   expect(line.startsWith(PREFIX)).toBe(true)
   expect(line).not.toContain('|')
   return JSON.parse(line.slice(PREFIX.length))
 }
 
-const exportFor = (scenario: string) => parseExport(script('region-stub', scenario)[0]!)
+const exportFor = scenario => parseExport(script('region-stub', scenario)[0])
 
-const identityOf = (scenario: string) => {
+const identityOf = (scenario) => {
   const id = exportFor(scenario).identity
   return Object.fromEntries(['region', 'regionId', 'portal', 'realm', 'name'].map(k => [k, String(id[k] ?? 'nil')]))
 }
 
-/** `label\tjson` lines to a map of label to the raw json (or 'ERROR'). */
-const labelled = (lines: string[]) => new Map(lines.map(l => l.split('\t') as [string, string]))
+/** Lines of `label<TAB>json` to a map of label to the raw json (or 'ERROR'). */
+const labelled = lines => new Map(lines.map(l => l.split('\t')))
 
-describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
+describe('toawowchar.lua (Lua 5.1)', () => {
   it('compiles (luac -p)', () => {
-    const r = lua(['luac', '-p', 'addon/toawowchar/toawowchar.lua'])
+    const r = lua(['luac', '-p', 'toawowchar/toawowchar.lua'])
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
   })
 
-  it('the version is the shared constant in the code and in the .toc, and it emits format 3', () => {
-    const code = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
-    const toc = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.toc`, 'utf8')
+  it('the version is the same in the code and in the .toc, and it emits format 3', () => {
+    const code = read('toawowchar/toawowchar.lua')
+    const toc = read('toawowchar/toawowchar.toc')
     expect(code).toContain(`local ADDON_VERSION = "${ADDON_VERSION}"`)
     expect(code).toContain('local FORMAT_VERSION = 3')
     expect(toc).toMatch(new RegExp(`^## Version: ${ADDON_VERSION.replace(/\./g, '\\.')}$`, 'm'))
@@ -72,7 +92,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   })
 
   it('does not use C_EncodingUtil any more (the stub raises if it is touched)', () => {
-    const code = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
+    const code = read('toawowchar/toawowchar.lua')
       .split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
     expect(code).not.toMatch(/C_EncodingUtil|CompressString|EncodeBase64|SerializeJSON/)
     expect(exportFor('eu').identity.name).toBe('Thor')
@@ -102,8 +122,8 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   })
 
   describe('race and faction', () => {
-    const identity = (scenario: string) => parseExport(script('race-stub', scenario)[0]!).identity
-    const both = (scenario: string) => {
+    const identity = (scenario) => parseExport(script('race-stub', scenario)[0] ).identity
+    const both = (scenario) => {
       const id = identity(scenario)
       return { race: id.race, faction: id.faction }
     }
@@ -119,7 +139,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('the format is 3, the identity keys are as in format 2, and the server decodes it', () => {
-      const j = parseExport(script('race-stub', 'nightelf')[0]!)
+      const j = parseExport(script('race-stub', 'nightelf')[0] )
       expect(j.format).toBe(3)
       expect(Object.keys(j.identity).sort()).toEqual(
         ['classFile', 'classID', 'faction', 'guid', 'hardcore', 'level', 'name', 'race', 'realm', 'region'].sort(),
@@ -130,7 +150,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
 
     it.each(['nil-returns', 'missing', 'erroring', 'wrongtypes', 'empty', 'name-only'])(
       'scenario %s (nil, a missing or raising function, a non-string, an empty string) leaves both keys out', (scenario) => {
-        const j = parseExport(script('race-stub', scenario)[0]!)
+        const j = parseExport(script('race-stub', scenario)[0] )
         expect(j.format).toBe(3)
         expect(j.identity).not.toHaveProperty('race')
         expect(j.identity).not.toHaveProperty('faction')
@@ -146,9 +166,9 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
 
   describe('serializer', () => {
     // Run lazily: nothing external may run at collection time (the suite is skipped offline).
-    let cases: Map<string, string>
+    let cases
     beforeAll(() => { cases = labelled(script('serializer-test')) })
-    const value = (label: string) => JSON.parse(cases.get(label)!)
+    const value = (label) => JSON.parse(cases.get(label) )
 
     it('escapes quotes and backslashes and reads them back', () => {
       expect(value('quote')).toBe('say "hi"')
@@ -156,7 +176,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('writes "|" as \\u007c so no pipe reaches the copy box, and reads it back as "|"', () => {
-      const raw = cases.get('pipe')!
+      const raw = cases.get('pipe')
       expect(raw).not.toContain('|')
       expect(raw).toContain('\\u007c')
       expect(value('pipe')).toBe('a|cff00ff00|Hitem:1|h[x]|h|r||')
@@ -170,7 +190,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('escapes control characters (and DEL) as \\u00XX, with the short forms for \\n \\r \\t', () => {
-      const raw = cases.get('control')!
+      const raw = cases.get('control')
       // no raw control character in the output
       // eslint-disable-next-line no-control-regex
       expect(raw).not.toMatch(/[\u0000-\u001F\u007F]/)
@@ -207,9 +227,9 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   })
 
   describe('item strings', () => {
-    let cases: Map<string, string>
+    let cases
     beforeAll(() => { cases = labelled(script('item-test')) })
-    const parsed = (label: string) => (cases.get(label) === 'null' ? null : JSON.parse(cases.get(label)!))
+    const parsed = (label) => (cases.get(label) === 'null' ? null : JSON.parse(cases.get(label) ))
 
     it('reads the fields by position: enchant 2, gems 3-6, suffix 7, bonus count 13 then the ids', () => {
       expect(parsed('full')).toEqual({ itemId: 12640, enchantId: 2564, gemIds: [213, 218], suffixId: 9, bonusIds: [1472, 6652, 7881] })
@@ -256,11 +276,30 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   })
 
   describe('a full export', () => {
-    let line: string
-    beforeAll(() => { line = script('export-full')[0]! })
+    let line
+    beforeAll(() => { line = script('export-full')[0] })
 
-    it('is pinned: the text equals the fixture the server tests decode', () => {
-      expect(line).toBe(readFileSync(`${ROOT}/app/test/fixtures/addon-export-v3.txt`, 'utf8').trim())
+    it('is pinned: the text equals test/fixtures/export-full.txt', () => {
+      expect(line).toBe(pinned('export-full', line))
+    })
+
+    it('is the same text on every run (nothing in it depends on the clock, the machine or the order of keys)', () => {
+      expect(script('export-full')[0]).toBe(line)
+    })
+
+    it('is the example export of format 3: written to dist/examples/export-format-3.txt, made of the stub\'s invented data', () => {
+      const j = parseExport(line)
+      // one example for each format the addon emits; a new format number in the code needs its own example here
+      const emitted = [...read('toawowchar/toawowchar.lua').matchAll(/^local FORMAT_VERSION = (\d+)$/gm)].map(m => Number(m[1]))
+      expect(emitted).toEqual([3])
+      expect(j.format).toBe(3)
+      expect(j.addonVersion).toBe(ADDON_VERSION)
+      expect(j.identity).toMatchObject({ name: 'Thorin', realm: 'Argent Dawn' }) // the stub's character, nobody's real one
+      mkdirSync(`${ROOT}/${EXAMPLES_DIR}`, { recursive: true })
+      const file = `${ROOT}/${EXAMPLES_DIR}/export-format-${j.format}.txt`
+      writeFileSync(file, `${line}\n`)
+      expect(readFileSync(file, 'utf8')).toBe(`${line}\n`)
+      expect(decodeAddonExport(readFileSync(file, 'utf8')).identity.name).toBe('Thorin')
     })
 
     it('has no pipe, and the pipes of a profession name come back after parsing', () => {
@@ -292,7 +331,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('the sections decode to typed fields, each with its source', () => {
-      const s = decodeAddonExport(line).sections!
+      const s = decodeAddonExport(line).sections
       expect(s.sources.bank).toEqual({ source: 'live', at: 1792000000 })
       expect(s.sources.recipes).toEqual({ source: 'cache', at: 1791913600 }) // the earlier session's Blacksmithing
       expect(s.recipes).toEqual([{ line: 164, name: 'Blacksmithing', at: 1791913600, recipes: [
@@ -301,21 +340,21 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       ] }])
       expect(s.questsDone).toEqual([4, 8, 15, 16, 23, 42, 1001, 1002])
       expect(s.player).toEqual({ money: 123456789, level: 60, xp: 1000, xpMax: 5000, rested: 250000 })
-      expect(s.reputation![0]).toEqual({ id: 72, reaction: 5, standing: 3500, floor: 3000, ceiling: 9000, name: 'Stormwind' })
+      expect(s.reputation [0]).toEqual({ id: 72, reaction: 5, standing: 3500, floor: 3000, ceiling: 9000, name: 'Stormwind' })
       expect(s.talents).toEqual([{ tree: 1100, nodes: [{ node: 10, rank: 2, entry: 100 }, { node: 11, rank: 1, entry: 0 }] }])
-      expect(s.legacy!.points).toEqual({ available: 5, cap: 50, spent: 20 })
-      expect(s.legacy!.trees.map(t => [t.tree, t.spent, t.nodes.length])).toEqual([[1187, 8, 1], [1188, 7, 0], [1189, 5, 1]])
-      expect(s.legacy!.challenges).toEqual({ source: { source: 'missing', why: 'not_available' } })
+      expect(s.legacy .points).toEqual({ available: 5, cap: 50, spent: 20 })
+      expect(s.legacy .trees.map(t => [t.tree, t.spent, t.nodes.length])).toEqual([[1187, 8, 1], [1188, 7, 0], [1189, 5, 1]])
+      expect(s.legacy .challenges).toEqual({ source: { source: 'missing', why: 'not_available' } })
       expect(s.flightPaths).toEqual([11, 12, 14])
       expect(s.honor).toEqual({ seasonRank: 4, seasonMax: 14 })
       expect(s.classSpells).toEqual([78, 772, 3908, 6603])
-      expect(s.questLog!.hidden).toBe(2)
+      expect(s.questLog .hidden).toBe(2)
     })
   })
 
   describe('the bank guard and the warband bank', () => {
-    const run = (scenario: string) => script('bank-test', scenario).map(parseExport)
-    const lists = (j: any) => ({ bank: j.bank, bankSeen: j.bankSeen, warbank: j.warbank, warbankSeen: j.warbankSeen })
+    const run = (scenario) => script('bank-test', scenario).map(parseExport)
+    const lists = (j) => ({ bank: j.bank, bankSeen: j.bankSeen, warbank: j.warbank, warbankSeen: j.warbankSeen })
     const FIRST = { bank: [1, 2, 3, 4], bankSeen: true, warbank: [91, 92, 93], warbankSeen: true }
     const SECOND = { bank: [7], bankSeen: true, warbank: [97], warbankSeen: true }
 
@@ -407,19 +446,19 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   // test/lua/sections-test.lua <scenario> [variant] prints `label<TAB>value` lines.
 
   // Each scenario runs once (the scripts are deterministic).
-  const memo = new Map<string, Map<string, string>>()
-  const scn = (scenario: string, variant?: string) => {
+  const memo = new Map()
+  const scn = (scenario, variant) => {
     const key = `${scenario} ${variant ?? ''}`
     if (!memo.has(key)) memo.set(key, labelled(script('sections-test', scenario, ...(variant ? [variant] : []))))
-    return memo.get(key)!
+    return memo.get(key)
   }
-  const json = (m: Map<string, string>, label: string): any => JSON.parse(m.get(label)!)
-  const exportOf = (m: Map<string, string>, label = 'export') => parseExport(m.get(label)!)
+  const json = (m, label) => JSON.parse(m.get(label) )
+  const exportOf = (m, label = 'export') => parseExport(m.get(label) )
   /** The chat lines without their colour codes. */
-  const plain = (m: Map<string, string>, label: string): string[] =>
-    (json(m, label) as string[]).map(l => l.replace(/\|c[0-9a-fA-F]{8}|\|r/g, ''))
-  const decoded = (m: Map<string, string>, label = 'export'): AddonExport => decodeAddonExport(m.get(label)!)
-  const marker = (j: any, name: string) => {
+  const plain = (m, label) =>
+    (json(m, label)).map(l => l.replace(/\|c[0-9a-fA-F]{8}|\|r/g, ''))
+  const decoded = (m, label = 'export') => decodeAddonExport(m.get(label) )
+  const marker = (j, name) => {
     const { source, at, why } = j.sections[name]
     return [source, at, why].filter(v => v !== undefined).join(':')
   }
@@ -439,7 +478,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       }
       expect(j.bankSeen).toBe(false)
       expect(j.warbankSeen).toBe(false)
-      expect(decoded(m).sections!.sources.bank).toEqual({ source: 'missing', why: 'not_available' })
+      expect(decoded(m).sections .sources.bank).toEqual({ source: 'missing', why: 'not_available' })
       expect(plain(m, 'chat')).toEqual([])
     })
 
@@ -485,12 +524,12 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       const s = j.sections
 
       // reputation: reaction -1 and 21, standing, floor and ceiling beyond +-1e9, an id above the bound: the rows are gone; the edge row stays
-      expect(s.reputation.factions.map((f: any[]) => f[0])).toEqual([72, 69, 169, 505])
+      expect(s.reputation.factions.map((f) => f[0])).toEqual([72, 69, 169, 505])
       expect(s.reputation.factions[3]).toEqual([505, 20, 1000000000, -1000000000, 1000000000, 'Edge'])
       // quest log: the objectives with a count outside 0..1e9 are gone, the quest and its edge objective stay, the quest with a too big id is not listed
-      const q = s.questLog.quests.find((x: any) => x.id === 7010)
+      const q = s.questLog.quests.find((x) => x.id === 7010)
       expect(q.objectives).toEqual([{ text: 'Edge', have: 1000000000, need: 1000000000, done: false }])
-      expect(s.questLog.quests.map((x: any) => x.id)).toEqual([7001, 7002, 7010])
+      expect(s.questLog.quests.map((x) => x.id)).toEqual([7001, 7002, 7010])
       // player: money, xp and rested outside their bounds are left out; level and xpMax stay
       expect(s.player).toEqual({ source: 'live', level: 60, xpMax: 5000 })
       // ids above the bound are not listed; the id at the bound is
@@ -500,7 +539,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       // talents: rank 256 and an entry above the id bound are gone, rank 255 and the entry at the bound stay
       expect(s.talents.trees[0].nodes).toEqual([[10, 2, 100], [11, 1, 0], [22, 255, 2147483647]])
       // Legacy: the tree whose spent count is beyond 1e9 is left out, and `available` from the same read
-      expect(s.legacy.trees.map((t: any) => t.tree)).toEqual([1188, 1189])
+      expect(s.legacy.trees.map((t) => t.tree)).toEqual([1188, 1189])
       expect(s.legacy.points).toEqual({ cap: 50, spent: 20 })
       // honor: the season maximum above 1000 is left out, the rank stays
       expect(s.honor).toEqual({ source: 'live', seasonRank: 4 })
@@ -512,18 +551,18 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
         { name: 'First Aid', skillLineId: 129, rank: 100, maxRank: 150 },
       ])
       // equipped: an item id above the bound leaves the slot out
-      expect(j.equipped.map((e: any) => [e.slot, e.itemId])).toEqual([[2, 100]])
+      expect(j.equipped.map((e) => [e.slot, e.itemId])).toEqual([[2, 100]])
       // identity: a realm over 100 bytes, a spec name over 50 and a class id above 1e6 are left out (all optional)
       for (const key of ['realm', 'specName', 'classID']) expect(j.identity, key).not.toHaveProperty(key)
       expect(j.identity).toMatchObject({ name: 'Thor', classFile: 'WARRIOR', level: 60, region: 'EU' })
       expect(p.identity.realm).toBeUndefined()
-      expect(p.sections!.sources.reputation.source).toBe('live')
+      expect(p.sections .sources.reputation.source).toBe('live')
     })
 
     it('a season rank above 1000 makes the honor section missing (there is no row to leave out), and the rest decodes', () => {
       const m = scn('bounds-honor')
       expect(exportOf(m).sections.honor).toEqual({ source: 'missing', why: 'not_available' })
-      expect(decoded(m).sections!.sources.honor).toEqual({ source: 'missing', why: 'not_available' })
+      expect(decoded(m).sections .sources.honor).toEqual({ source: 'missing', why: 'not_available' })
     })
 
     it('a level above 255, a region id above 1e6 and a portal over 32 bytes are left out of the identity; the player section keeps its other numbers', () => {
@@ -551,8 +590,8 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   })
 
   describe('every section, live', () => {
-    let m: Map<string, string>
-    let j: any
+    let m
+    let j
     beforeAll(() => {
       m = scn('full')
       j = exportOf(m)
@@ -564,7 +603,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
         else expect(marker(j, name), name).toMatch(/^live/)
       }
       const p = decoded(m)
-      expect(p.sections!.sources.talents).toEqual({ source: 'live' })
+      expect(p.sections .sources.talents).toEqual({ source: 'live' })
       expect(p.bankSeen).toBe(false)
     })
 
@@ -639,8 +678,8 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       expect(first.sections.questsDone).toEqual({ source: 'missing', why: 'not_loaded' })
       expect(exportOf(m, 'filled').sections.questsDone).toMatchObject({ source: 'live', ids: [10, 40] })
       const p = decoded(m, 'empty-no-cache')
-      expect(p.sections!.questsDone).toBeUndefined()
-      expect(p.sections!.sources.questsDone).toEqual({ source: 'missing', why: 'not_loaded' })
+      expect(p.sections .questsDone).toBeUndefined()
+      expect(p.sections .sources.questsDone).toEqual({ source: 'missing', why: 'not_loaded' })
     })
 
     it('an empty list at logout, or a shorter one, takes nothing away', () => {
@@ -655,7 +694,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       expect(exportOf(m, 'session2-empty').sections.questsDone).toEqual({ source: 'cache', at: 1792000000, ids: [10, 20, 30] })
       expect(exportOf(m, 'session2-filled').sections.questsDone).toEqual({ source: 'live', at: 1792000000 + 7200, ids: [10, 20, 30, 40] })
       expect(json(m, 'db').Forever.Thor.quests.ids).toEqual([10, 20, 30, 40])
-      expect(decoded(m, 'session2-empty').sections!.sources.questsDone).toEqual({ source: 'cache', at: 1792000000 })
+      expect(decoded(m, 'session2-empty').sections .sources.questsDone).toEqual({ source: 'cache', at: 1792000000 })
     })
 
     it('a client without the function is missing/not_available', () => {
@@ -668,7 +707,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       expect(j.sections.questsDone.ids).toHaveLength(ADDON_LIST_CAPS.questsDone)
       expect(j.sections.questsDone.ids[0]).toBe(1001)
       expect(j.truncated).toBe(true)
-      expect(decoded(m).sections!.questsDone).toHaveLength(ADDON_LIST_CAPS.questsDone)
+      expect(decoded(m).sections .questsDone).toHaveLength(ADDON_LIST_CAPS.questsDone)
     })
   })
 
@@ -700,12 +739,12 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       ] })
       expect(j.sections.flightPaths).toEqual({ source: 'cache', at: 1790000000, ids: [2, 3] })
       expect(j.sections.questsDone.ids).toEqual([3, 5, 8, 9]) // the cached 8 and 9 and what the game said
-      expect(decoded(m).sections!.recipes).toHaveLength(1)
+      expect(decoded(m).sections .recipes).toHaveLength(1)
     })
   })
 
   describe('bank and warband bank in the cache', () => {
-    let m: Map<string, string>
+    let m
     beforeAll(() => { m = scn('bank-cache') })
 
     it('are read while the bank is open and say so once, when it closes', () => {
@@ -726,7 +765,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       expect(j.bankSource).toBe('tabs')
       expect(marker(j, 'bank')).toBe('cache:1792000000')
       expect(marker(j, 'warbank')).toBe('cache:1792000000')
-      const p = decodeAddonExport(m.get('session2-cache')!)
+      const p = decodeAddonExport(m.get('session2-cache') )
       expect([...obtainedItemIds(p)]).toEqual(expect.arrayContaining([1, 2, 3, 91, 92]))
     })
 
@@ -754,7 +793,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       const first = exportOf(m, 'first').sections.recipes
       expect(first).toEqual({ source: 'live', at: 1792000000, lines: [{ line: 197, name: 'Tailoring', at: 1792000000, recipes: [[1, [[2589, 2], [2320, 1]]], [2, [[2589, 3]]]] }] })
       const second = exportOf(m, 'second').sections.recipes.lines[0].recipes
-      expect(second.map((r: any) => r[0])).toEqual([1, 2, 3])
+      expect(second.map((r) => r[0])).toEqual([1, 2, 3])
       expect(second[2]).toEqual([3, [[4306, 1]]])
       expect(exportOf(m, 'before').sections.recipes).toEqual({ source: 'missing', why: 'open_profession_window' })
     })
@@ -775,12 +814,12 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
 
     it('each profession is its own line with its own time', () => {
       const lines = exportOf(scn('recipes'), 'two-professions').sections.recipes.lines
-      expect(lines.map((l: any) => [l.line, l.name])).toEqual([[129, 'First Aid'], [197, 'Tailoring']])
+      expect(lines.map((l) => [l.line, l.name])).toEqual([[129, 'First Aid'], [197, 'Tailoring']])
     })
 
     it.each(['all', 'all-empty'])('with GetAllRecipeIDs (%s): the full list when it has one, the filtered view when it is empty', (variant) => {
       const m = scn('recipes', variant)
-      const ids = exportOf(m, 'first').sections.recipes.lines[0].recipes.map((r: any) => r[0])
+      const ids = exportOf(m, 'first').sections.recipes.lines[0].recipes.map((r) => r[0])
       expect(ids).toEqual(variant === 'all' ? [1, 2, 3] : [1, 2])
     })
 
@@ -802,7 +841,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       const j = exportOf(m)
       expect(j.sections.recipes.lines[0].recipes).toHaveLength(ADDON_LIST_CAPS.recipesPerLine)
       expect(j.truncated).toBe(true)
-      expect(decoded(m).sections!.recipes![0]!.recipes).toHaveLength(ADDON_LIST_CAPS.recipesPerLine)
+      expect(decoded(m).sections .recipes [0] .recipes).toHaveLength(ADDON_LIST_CAPS.recipesPerLine)
     })
   })
 
@@ -872,11 +911,11 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     it('the cache survives into the next session', () => {
       const m = scn('legacy-cache')
       expect(marker(exportOf(m, 'session2'), 'legacy')).toBe('cache:1792000000')
-      expect(decoded(m, 'session2').sections!.legacy!.trees[0]).toEqual({ tree: 1187, spent: 8, nodes: [{ node: 201, rank: 1, entry: 5 }] })
+      expect(decoded(m, 'session2').sections .legacy .trees[0]).toEqual({ tree: 1187, spent: 8, nodes: [{ node: 201, rank: 1, entry: 5 }] })
     })
 
     it('uses Constants.LegacyConsts when the game has it', () => {
-      expect(exportOf(scn('legacy', 'constants'), 'first').sections.legacy.trees.map((t: any) => t.tree)).toEqual([1187, 1188, 1189])
+      expect(exportOf(scn('legacy', 'constants'), 'first').sections.legacy.trees.map((t) => t.tree)).toEqual([1187, 1188, 1189])
     })
   })
 
@@ -885,7 +924,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       const m = scn('combat')
       expect(plain(m, 'chat-combat')).toEqual(['toawowchar: in combat. The export window opens when combat ends.'])
       expect(json(m, 'window-made')).toEqual([false])
-      expect(m.get('after-combat')!.startsWith(PREFIX)).toBe(true)
+      expect(m.get('after-combat') .startsWith(PREFIX)).toBe(true)
       expect(json(m, 'not-opened-twice')).toEqual([true])
     })
   })
@@ -893,7 +932,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   describe('/wowchar', () => {
     it('anything but «reset» opens the window; reset (any case) opens nothing', () => {
       const m = scn('unknown-command')
-      expect(m.get('export')!.startsWith(PREFIX)).toBe(true)
+      expect(m.get('export') .startsWith(PREFIX)).toBe(true)
       expect(json(m, 'after-reset')).toEqual([true]) // the window still shows the first text
     })
   })
@@ -908,7 +947,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('shows the character line, a row for each section, the export header, the size and the paste line', () => {
-      const lines = json(scn('window'), 'window') as string[]
+      const lines = json(scn('window'), 'window')
       const text = lines.map(l => l.replace(/\|T[^|]*\|t/g, '').replace(/\|c[0-9a-fA-F]{8}|\|r/g, ''))
       expect(text[0]).toBe('wowchar export')
       expect(text[1]).toBe('Thor  level 60 Night Elf Warrior  - Forever')
@@ -935,7 +974,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('draws the state with the ready-check textures: Ready for live, Waiting for cache, NotReady for missing', () => {
-      const lines = json(scn('window'), 'window') as string[]
+      const lines = json(scn('window'), 'window')
       expect(lines[2]).toContain('|TInterface\\RaidFrame\\ReadyCheck-Ready:14|t')
       expect(lines[4]).toContain('|TInterface\\RaidFrame\\ReadyCheck-NotReady:14|t')
       // the pipes are in the window's texts only: the export itself has none (checked in every other test)
@@ -961,7 +1000,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('falls back when a template is missing: a plain frame with a backdrop, then no backdrop; the text box falls back to a scroll frame with an edit box', () => {
-      const frame = (variant: string) => json(scn('window', variant), 'frame')
+      const frame = (variant) => json(scn('window', variant), 'frame')
       expect(frame('no-templates')).toMatchObject({ template: 'BackdropTemplate', width: 620, shown: true })
       expect(frame('no-backdrop')).toMatchObject({ template: 'none', shown: true })
       expect(frame('no-input-template')).toMatchObject({ template: 'BasicFrameTemplateWithInset', shown: true })
@@ -980,14 +1019,14 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
 
   // ── Phase A: the snapshot kept current by events, the relog, the two slash words, Forever by functions ──
   // test/lua/snapshot-test.lua <scenario> [variant] prints `label<TAB>value` lines.
-  const snapMemo = new Map<string, Map<string, string>>()
-  const snap = (scenario: string, variant?: string) => {
+  const snapMemo = new Map()
+  const snap = (scenario, variant) => {
     const key = `${scenario} ${variant ?? ''}`
     if (!snapMemo.has(key)) snapMemo.set(key, labelled(script('snapshot-test', scenario, ...(variant ? [variant] : []))))
-    return snapMemo.get(key)!
+    return snapMemo.get(key)
   }
   /** The addon's code without its comment lines. */
-  const codeOf = () => readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
+  const codeOf = () => read('toawowchar/toawowchar.lua')
     .split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
 
   describe('the snapshot: the cache kept current by game events', () => {
@@ -1040,7 +1079,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     describe('the throttle: at most one rebuild of a part per 5 seconds, the last change never lost', () => {
-      let m: Map<string, string>
+      let m
       beforeAll(() => { m = snap('throttle') })
 
       it('the interval is one constant, 5 seconds', () => {
@@ -1074,7 +1113,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     describe('gold and XP (PLAYER_MONEY, PLAYER_XP_UPDATE): the player part, the same throttle, no chat', () => {
-      let m: Map<string, string>
+      let m
       beforeAll(() => { m = snap('player-events') })
 
       it('the first event reads once, at once', () => {
@@ -1141,7 +1180,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     describe('combat', () => {
-      let m: Map<string, string>
+      let m
       beforeAll(() => { m = snap('combat') })
 
       it('nothing is read in combat, however many events come, and nothing is scheduled', () => {
@@ -1165,8 +1204,8 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
 
     it('ADDON_CACHED_SECTIONS is exactly what the addon writes into toawowcharDB (the page lists it)', () => {
       // saved record field -> section name (the two that are named differently in the export)
-      const section: Record<string, string> = { flights: 'flightPaths', quests: 'questsDone' }
-      const keys = json(snap('cached-keys'), 'keys') as string[]
+      const section = { flights: 'flightPaths', quests: 'questsDone' }
+      const keys = json(snap('cached-keys'), 'keys')
       const written = keys.filter(k => k !== 'v').map(k => section[k] ?? k)
       expect([...written].sort()).toEqual([...ADDON_CACHED_SECTIONS].sort())
       // pure and well formed: every entry is a section of the export, once, in the export's order
@@ -1176,7 +1215,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       for (const name of ADDON_CACHED_SECTIONS) expect(SECTION_NAMES, name).toContain(name)
       // the quest log, reputation, talents, honor and class spells are never stored
       for (const name of ['questLog', 'reputation', 'talents', 'honor', 'classSpells']) {
-        expect(ADDON_CACHED_SECTIONS as readonly string[], name).not.toContain(name)
+        expect(ADDON_CACHED_SECTIONS, name).not.toContain(name)
       }
     })
 
@@ -1241,11 +1280,11 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('the addon is named toawowchar: TOC title, SavedVariables, frame name; the old names are gone', () => {
-      const toc = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.toc`, 'utf8')
+      const toc = read('toawowchar/toawowchar.toc')
       expect(toc).toMatch(/^## Title: toawowchar$/m)
       expect(toc).toMatch(/^## SavedVariables: toawowcharDB$/m)
       expect(toc).toMatch(/^toawowchar\.lua$/m)
-      const code = readFileSync(`${ROOT}/addon/toawowchar/toawowchar.lua`, 'utf8')
+      const code = read('toawowchar/toawowchar.lua')
       expect(code).not.toMatch(/WowcharExport/)
       expect(code).toContain('"toawowcharFrame"')
       expect(code).toContain('PREFIX = "WOWCHAR:"') // the export prefix is unchanged
@@ -1253,11 +1292,11 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
   })
 
   describe('after a relog /wowchar gives a complete export without opening the bank', () => {
-    let m: Map<string, string>
-    let j: any
+    let m
+    let j
     beforeAll(() => {
       m = snap('relog')
-      j = parseExport(m.get('relog')!)
+      j = parseExport(m.get('relog') )
     })
 
     it('session 1: the bank, a profession window and the flight map were opened once (one chat line each); the events then added nothing to the chat', () => {
@@ -1287,15 +1326,15 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       expect(j.warbank).toEqual([91, 92])
       expect(j.bankSeen).toBe(true)
       expect(j.bankSource).toBe('tabs')
-      expect(j.sections.recipes.lines[0].recipes.map((r: any) => r[0])).toEqual([1, 2, 4])
+      expect(j.sections.recipes.lines[0].recipes.map((r) => r[0])).toEqual([1, 2, 4])
       expect(j.sections.flightPaths.ids).toEqual([11, 12, 14])
     })
 
     it('what the events kept is in the export: the gear, the bags, the quest turned in, the new profession, the level and the money', () => {
-      expect(j.equipped.map((e: any) => e.slot)).toEqual([1, 2, 16])
+      expect(j.equipped.map((e) => e.slot)).toEqual([1, 2, 16])
       expect(j.bags).toEqual([900, 901])
       expect(j.sections.questsDone.ids).toEqual([3, 5, 9, 1001])
-      expect(j.professions.map((p: any) => p.name)).toEqual(['Tailoring', 'First Aid', 'Cooking'])
+      expect(j.professions.map((p) => p.name)).toEqual(['Tailoring', 'First Aid', 'Cooking'])
       expect(j.sections.player).toMatchObject({ level: 61, money: 123999999 })
     })
 
@@ -1305,10 +1344,10 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       const p = decoded(m, 'relog')
       expect(p.format).toBe(3)
       expect(p.bank).toEqual([11, 12])
-      expect(p.sections!.sources.bank).toEqual({ source: 'cache', at: 1792000000 })
-      expect(p.sections!.sources.flightPaths).toEqual({ source: 'cache', at: 1792000000 })
-      expect(p.sections!.recipes).toHaveLength(1)
-      expect(p.sections!.questsDone).toEqual([3, 5, 9, 1001])
+      expect(p.sections .sources.bank).toEqual({ source: 'cache', at: 1792000000 })
+      expect(p.sections .sources.flightPaths).toEqual({ source: 'cache', at: 1792000000 })
+      expect(p.sections .recipes).toHaveLength(1)
+      expect(p.sections .questsDone).toEqual([3, 5, 9, 1001])
     })
 
     it('the window lists the cached rows as «saved» and the rest as «read now»', () => {
@@ -1319,20 +1358,20 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('the text is pinned: test/fixtures/addon-export-relog.txt (the server import test sends this very text)', () => {
-      const fixture = readFileSync(`${ROOT}/app/test/fixtures/addon-export-relog.txt`, 'utf8').trim()
-      expect(script('snapshot-test', 'relog-text')[0]).toBe(fixture)
-      expect(m.get('relog')).toBe(fixture)
-      const blind = readFileSync(`${ROOT}/app/test/fixtures/addon-export-relog-blind.txt`, 'utf8').trim()
+      const relogFixture = pinned('export-relog', m.get('relog'))
+      expect(script('snapshot-test', 'relog-text')[0]).toBe(relogFixture)
+      expect(m.get('relog')).toBe(relogFixture)
+      const blind = pinned('export-relog-blind', script('snapshot-test', 'relog-text', 'blind')[0])
       expect(script('snapshot-test', 'relog-text', 'blind')[0]).toBe(blind)
     })
 
     it('a game that also hides the money (a secret value) and has no profession list: both come from the snapshot as cache, with their time', () => {
-      const b = parseExport(snap('relog', 'blind').get('relog')!)
+      const b = parseExport(snap('relog', 'blind').get('relog') )
       expect(b.sections.player).toEqual({ source: 'cache', at: 1792000000, money: 123999999, level: 61, xp: 1000, xpMax: 5000, rested: 0 })
       expect(b.sections.professions).toEqual({ source: 'cache', at: 1792000000 })
-      expect(b.professions.map((p: any) => p.name)).toEqual(['Tailoring', 'First Aid', 'Cooking'])
+      expect(b.professions.map((p) => p.name)).toEqual(['Tailoring', 'First Aid', 'Cooking'])
       for (const name of SECTION_NAMES) expect(b.sections[name].source, name).not.toBe('missing')
-      expect(decodeAddonExport(snap('relog', 'blind').get('relog')!).sections!.sources.player).toEqual({ source: 'cache', at: 1792000000 })
+      expect(decodeAddonExport(snap('relog', 'blind').get('relog') ).sections .sources.player).toEqual({ source: 'cache', at: 1792000000 })
     })
   })
 
@@ -1348,9 +1387,9 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       ])
     })
 
-    const baseline = () => parseExport(snap('interface', '16001').get('export')!)
+    const baseline = () => parseExport(snap('interface', '16001').get('export') )
     it.each(['11507', '16002', '120105', '0', '16001:2', '120105:1', '11507:14'])('under interface %s (and WOW_PROJECT_ID) the sections are the ones of 16001', (variant) => {
-      const j = parseExport(snap('interface', variant).get('export')!)
+      const j = parseExport(snap('interface', variant).get('export') )
       const { client: a, ...rest } = j
       const { client: b, ...base } = baseline()
       expect(rest).toEqual(base)
@@ -1370,7 +1409,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       ['C_SpellBook', ['classSpells']],
       ['GetProfessions', ['professions']],
     ])('without %s the section is missing/not_available, and every other section is as before', (path, names) => {
-      const j = parseExport(snap('without', path).get('export')!)
+      const j = parseExport(snap('without', path).get('export') )
       const base = baseline()
       for (const name of SECTION_NAMES) {
         if (names.includes(name)) expect(j.sections[name], name).toEqual({ source: 'missing', why: 'not_available' })
@@ -1378,7 +1417,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
         else if (path === 'GetProfessions' && name === 'classSpells') expect(j.sections[name].ids).toEqual([78, 772, 3908, 6603])
         else expect(j.sections[name], name).toEqual(base.sections[name])
       }
-      expect(decoded(snap('without', path)).sections!.sources[names[0] as 'recipes']).toEqual({ source: 'missing', why: 'not_available' })
+      expect(decoded(snap('without', path)).sections .sources[names[0]]).toEqual({ source: 'missing', why: 'not_available' })
     })
   })
 
@@ -1386,10 +1425,10 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     // test/lua/maxed-stub.lua: level 60, 1,500 completed quests, a full quest log, two full
     // professions (260 recipes each) plus First Aid, Cooking and Fishing, full bags, bank and
     // warband bank, 80 reputations, talents, three Legacy trees, 60 flight paths, 150 spells.
-    let line: string
-    let p: AddonExport
+    let line
+    let p
     beforeAll(() => {
-      line = script('maxed-stub', 'maxed')[0]!
+      line = script('maxed-stub', 'maxed')[0]
       p = decodeAddonExport(line)
     })
 
@@ -1399,7 +1438,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       console.info(`maxed character export: ${line.length} characters, ${bytes} bytes (${(bytes / 1024).toFixed(1)} KiB); MAX_ENCODED_LENGTH ${MAX_ENCODED_LENGTH} is ${(MAX_ENCODED_LENGTH / line.length).toFixed(2)} times that`)
       expect(line).not.toContain('|')
       expect(p.format).toBe(3)
-      for (const name of SECTION_NAMES) expect(p.sections!.sources[name].source, name).toBe('live')
+      for (const name of SECTION_NAMES) expect(p.sections .sources[name].source, name).toBe('live')
       // pinned with room (the exact number moves with every change to the format; docs/addon-export-format-3.md says what it was)
       expect(line.length).toBeGreaterThan(55_000)
       expect(line.length).toBeLessThan(70_000)
@@ -1408,32 +1447,32 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     })
 
     it('every list is at most half its cap (the caps are about twice the measured numbers), except the two fixed-size ones', () => {
-      const s = p.sections!
+      const s = p.sections
       const measured = {
-        questsDone: s.questsDone!.length,
-        questLog: s.questLog!.quests.length,
-        objectivesPerQuest: Math.max(...s.questLog!.quests.map(q => q.objectives.length)),
-        factions: s.reputation!.length,
-        recipeLines: s.recipes!.length,
-        recipesPerLine: Math.max(...s.recipes!.map(l => l.recipes.length)),
-        reagentsPerRecipe: Math.max(...s.recipes!.flatMap(l => l.recipes.map(r => r.reagents.length))),
-        nodesPerTree: Math.max(...s.talents!.map(t => t.nodes.length), ...s.legacy!.trees.map(t => t.nodes.length)),
-        flightPaths: s.flightPaths!.length,
-        classSpells: s.classSpells!.length,
+        questsDone: s.questsDone .length,
+        questLog: s.questLog .quests.length,
+        objectivesPerQuest: Math.max(...s.questLog .quests.map(q => q.objectives.length)),
+        factions: s.reputation .length,
+        recipeLines: s.recipes .length,
+        recipesPerLine: Math.max(...s.recipes .map(l => l.recipes.length)),
+        reagentsPerRecipe: Math.max(...s.recipes .flatMap(l => l.recipes.map(r => r.reagents.length))),
+        nodesPerTree: Math.max(...s.talents .map(t => t.nodes.length), ...s.legacy .trees.map(t => t.nodes.length)),
+        flightPaths: s.flightPaths .length,
+        classSpells: s.classSpells .length,
       }
       expect(measured).toEqual({
         questsDone: 1500, questLog: 25, objectivesPerQuest: 3, factions: 80, recipeLines: 5, recipesPerLine: 260,
         reagentsPerRecipe: 6, nodesPerTree: 70, flightPaths: 60, classSpells: 150,
       })
       for (const [name, count] of Object.entries(measured)) {
-        expect(ADDON_LIST_CAPS[name as keyof typeof ADDON_LIST_CAPS], name).toBeGreaterThanOrEqual(count * 1.9)
+        expect(ADDON_LIST_CAPS[name], name).toBeGreaterThanOrEqual(count * 1.9)
       }
-      expect(s.legacy!.trees).toHaveLength(3) // the game has three; the cap of four leaves room for one
+      expect(s.legacy .trees).toHaveLength(3) // the game has three; the cap of four leaves room for one
       expect(p.bags.length + p.bank.length + p.warbank.length).toBeGreaterThan(700)
     })
 
     it('saturated (every list at its cap, more than any character has) is cut to fit: the lowest-priority sections are left out, in order, as missing/too_large', () => {
-      const text = script('maxed-stub', 'saturated')[0]!
+      const text = script('maxed-stub', 'saturated')[0]
       expect(text.length).toBeLessThanOrEqual(MAX_ENCODED_LENGTH)
       const j = parseExport(text)
       const order = ['classSpells', 'flightPaths', 'legacy', 'talents', 'honor', 'reputation', 'questLog', 'recipes']
@@ -1442,11 +1481,11 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       // a prefix of the order: once a section was kept, no later one was left out
       expect(dropped.join()).toBe([...dropped].sort((a, b) => Number(b) - Number(a)).join())
       expect(j.truncated).toBe(true)
-      expect(decodeAddonExport(text).sections!.sources.recipes.why).toBe('too_large')
+      expect(decodeAddonExport(text).sections .sources.recipes.why).toBe('too_large')
     })
 
     it('the saturated export, wrapped as the route body { export: text }, is within ADDON_BODY_MAX in UTF-8 bytes (true, but weak: this stub has almost no quotes; the next test is the one that reaches the limit)', () => {
-      const text = script('maxed-stub', 'saturated')[0]!
+      const text = script('maxed-stub', 'saturated')[0]
       const body = Buffer.byteLength(JSON.stringify({ export: text }), 'utf8')
       const escapes = body - Buffer.byteLength(text, 'utf8')
       // eslint-disable-next-line no-console
@@ -1459,13 +1498,13 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
     it('a text of quotes and backslashes: under the 128 KiB limit but over the body limit, so the addon leaves sections out until the BODY fits, and the server takes it', () => {
       // test/lua/maxed-stub.lua quotes: objective texts (255) and faction names (100) of only " and \,
       // two characters each in the export and four in the body
-      const [text, trace] = script('maxed-stub', 'quotes') as [string, string]
+      const [text, trace] = script('maxed-stub', 'quotes')
       const steps = trace.split(';').map((x) => {
-        const [name, length, body] = x.split(':') as [string, string, string]
+        const [name, length, body] = x.split(':')
         return { name, length: Number(length), body: Number(body) }
       })
-      const first = steps[0]!
-      const last = steps[steps.length - 1]!
+      const first = steps[0]
+      const last = steps[steps.length - 1]
       // eslint-disable-next-line no-console
       console.info(`quotes stub, body bytes by step: ${steps.map(s => `${s.name} ${s.length}/${s.body}`).join(', ')}; ADDON_BODY_MAX ${ADDON_BODY_MAX}`)
 
@@ -1494,7 +1533,7 @@ describe.skipIf(!haveImage)('toawowchar.lua (Lua 5.1)', () => {
       const j = parseExport(text)
       for (const name of dropped) expect(j.sections[name]).toMatchObject({ source: 'missing', why: 'too_large' })
       expect(j.sections.questLog.source).toBe('live') // the drop stopped as soon as the body fitted
-      expect(decodeAddonExport(text).sections!.sources.reputation.why).toBe('too_large')
+      expect(decodeAddonExport(text).sections .sources.reputation.why).toBe('too_large')
     })
   })
 })

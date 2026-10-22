@@ -1,9 +1,9 @@
 -- The bank guard and the warband bank, run through the addon's events and
--- /wowchar. Usage: lua app/test/lua/bank-test.lua <scenario> (from the repo root).
+-- /wowchar. Usage: lua test/lua/bank-test.lua <scenario> (from the repo root).
 -- Prints one export text per line, one for each /wowchar the scenario types; the
--- Vitest test parses them.
+-- test/addon-lua.test.mjs parses them.
 local scenario = arg[1]
-local Env = dofile("app/test/lua/wow-env.lua")
+local Env = dofile("test/lua/wow-env.lua")
 
 -- Character bank tabs 6..8 and warband tabs 12..14 (the numbers are arbitrary).
 local world = {

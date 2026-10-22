@@ -1,14 +1,14 @@
 -- The sections of addon 0.4.0, the cache, the captures and the window, on small
 -- fixed game data. Usage (from the repository root):
---     lua app/test/lua/sections-test.lua <scenario>
+--     lua test/lua/sections-test.lua <scenario>
 -- Prints lines `label<TAB>value`: the value is an export text, or JSON written
 -- with the addon's own serializer (chat lines, window text, the saved table).
--- The Vitest test (addon-lua.test.ts) parses them. A failing assertion in a
+-- test/addon-lua.test.mjs parses them. A failing assertion in a
 -- scenario raises, so the exit code is non-zero.
 local scenario = arg[1] or "full"
 local variant = arg[2]
-local Env = dofile("app/test/lua/wow-env.lua")
-local World = dofile("app/test/lua/world.lua")
+local Env = dofile("test/lua/wow-env.lua")
+local World = dofile("test/lua/world.lua")
 
 local function emit(label, value)
     if type(value) == "string" then

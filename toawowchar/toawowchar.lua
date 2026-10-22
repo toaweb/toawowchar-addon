@@ -1,4 +1,4 @@
--- toawowchar 0.4.0
+-- toawowchar 0.4.1
 --
 -- Type /wowchar (or /toawowchar, the same command) to open a window with a text
 -- string (who the character is, equipped items, bags, the bank and the warband
@@ -62,7 +62,7 @@
 -- passes one too: the addon's own namespace) and read the helpers from it.
 local addonName, ns = ...
 
-local ADDON_VERSION = "0.4.0"
+local ADDON_VERSION = "0.4.1"
 local FORMAT_VERSION = 3
 local PREFIX = "WOWCHAR:" .. FORMAT_VERSION .. ":"
 -- The longest text the server takes (MAX_ENCODED_LENGTH in
@@ -1974,10 +1974,12 @@ end
 --   PLAYER_LEVEL_UP           player, read LEVEL_UP_DELAY seconds after the event:
 --                             some clients still answer the old level and XP max
 --                             while the event fires (Snapshot.LevelUp)
--- The cache also keeps the bank, the warband bank, the recipes, the flight paths and
--- Legacy (written by their own captures, with a chat line); the whole list is
--- ADDON_CACHED_SECTIONS in app/shared/addon-sections.ts, and a Lua test pins it to
--- the sections this file writes into toawowcharDB.
+-- The cache also keeps the bank, the warband bank, the recipes and the flight paths
+-- (written by their own captures, each with a chat line) and Legacy. Legacy has no
+-- capture of its own and says nothing in the chat: Read.Legacy saves it whenever
+-- /wowchar reads it. The whole list is ADDON_CACHED_SECTIONS in wowchar's
+-- app/shared/addon-sections.ts (copied to test/contract.json), and a Lua test pins
+-- it to the sections this file writes into toawowcharDB.
 -- `equipped` and `bags` are kept but the export does not read them back yet: a
 -- /wowchar always reads both live (docs/addon-export-format-3.md). They are not dead
 -- data: they stay for a later phase and for the page's list of what the addon keeps.

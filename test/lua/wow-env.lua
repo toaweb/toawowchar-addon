@@ -1,7 +1,7 @@
--- A stub of the WoW API for running addon/toawowchar/toawowchar.lua in
+-- A stub of the WoW API for running toawowchar/toawowchar.lua in
 -- plain Lua 5.1 (no client). Usage from a test script, run from the repository
 -- root:
---     local Env = dofile("app/test/lua/wow-env.lua")
+--     local Env = dofile("test/lua/wow-env.lua")
 --     Env.load()               -- loads the addon; Env.ns has its helpers
 --     Env.fire("BANKFRAME_OPENED")
 --     local text = Env.run()   -- what /wowchar puts in the copy box
@@ -223,7 +223,7 @@ end
 -- Loads the addon. The second argument stands in for the addon's namespace table
 -- the client passes (the addon puts its helpers in it).
 function Env.load()
-    local chunk = assert(loadfile("addon/toawowchar/toawowchar.lua"))
+    local chunk = assert(loadfile("toawowchar/toawowchar.lua"))
     chunk("toawowchar", Env.ns)
 end
 

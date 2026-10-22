@@ -1,0 +1,42 @@
+# Tests and checks on every push to main and every pull request. GitHub-hosted runners only:
+# this repository is public, and a public repository never uses a self-hosted runner
+# (DEPLOYMENT_STRATEGY standard). Nothing here needs a secret.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Lua tests (Lua 5.1), the checks of the export against the contract, and the tests of
+      # the release scripts. They run in the Docker image of test/Dockerfile; Docker is on the runner.
+      - name: Tests
+        run: scripts/test.sh
+
+      # The TOC, the Lua, the README and the CHANGELOG agree on the version; ## Interface is valid.
+      - name: Version check
+        run: python3 scripts/check-version.py
+
+      # The zip must be the same bytes whatever the time zone of the machine that makes it.
+      - name: The zip is the same in two time zones
+        run: |
+          set -eu
+          TZ=UTC python3 scripts/build-zip.py --out "${RUNNER_TEMP}/zip-utc"
+          TZ=Pacific/Auckland python3 scripts/build-zip.py --out "${RUNNER_TEMP}/zip-auckland"
+          utc="$(sha256sum "${RUNNER_TEMP}"/zip-utc/toawowchar-*.zip | cut -d' ' -f1)"
+          auckland="$(sha256sum "${RUNNER_TEMP}"/zip-auckland/toawowchar-*.zip | cut -d' ' -f1)"
+          echo "UTC              ${utc}"
+          echo "Pacific/Auckland ${auckland}"
+          test -n "${utc}" && test "${utc}" = "${auckland}"
