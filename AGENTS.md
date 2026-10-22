@@ -25,6 +25,7 @@ Steps are in README.md, «Cut a release». The rules behind them:
 - The version is in four places that must agree: `## Version:` in the TOC, `ADDON_VERSION` in the Lua, the `Version X.Y.Z` line in `toawowchar/README.md` (the first line that starts that way; keep it under «Status») and the newest `## [X.Y.Z] - date` in `CHANGELOG.md`. `scripts/check-version.py` checks them; `## Interface:` must be a comma-separated list of whole numbers (10000 to 999999), no repeats.
 - A change to any file in the zip (`toawowchar/*`) needs a new version and a CHANGELOG entry, even a comment or a typo. SemVer; pre-1.0, so a MINOR may break.
 - **The owner tags and pushes.** Agents do not commit, tag, push or run workflows without being told to. `vX.Y.Z` is annotated and is put on a commit on `main`; `release.yml` publishes the release. Tags are never moved or deleted.
+- **Tag ruleset.** Before the first tag the owner sets up a tag ruleset on this repository (pattern `v*`, restrict updates and deletions). Tags are never moved or deleted; a bad release gets a new version.
 - The release asset address is `https://github.com/toaweb/toawowchar-addon/releases/download/vX.Y.Z/toawowchar-X.Y.Z.zip`. wowchar pins that address with the size and sha256 of the file, so a release is never replaced after it is published: a fix is a new version. The size and sha256 to pin are in the release's `SHA256SUMS` and in the output of `python3 scripts/build-zip.py` (the build is deterministic: the local zip equals the release's).
 - After a release, wowchar's pin is bumped: its `AGENTS.md`, «Addon release», has its side of the procedure.
 - The zip holds exactly `toawowchar/README.md`, `toawowchar/toawowchar.lua` and `toawowchar/toawowchar.toc`, in that order. A new file in the zip means a change to `ZIP_FILES` in `scripts/addon_info.py` and in the TOC. Source files are LF only (`.gitattributes`); `build-zip.py` refuses a carriage return.
@@ -72,5 +73,3 @@ On 2026-10-22, in a real Forever client (build 70450, addon 0.4.0):
 ## License
 
 MIT, copyright toaweb (`LICENSE`).
-
-**TODO(owner): confirm the license.** MIT is the default chosen for the first release; the owner has not confirmed it. Do not change it without the owner.

@@ -39,6 +39,8 @@ python3 scripts/build-zip.py            # dist/toawowchar-<version>.zip and dist
 
 Python 3.8 or newer, standard library only. The zip is the same bytes on every machine: three entries under `toawowchar/` (`README.md`, `toawowchar.lua`, `toawowchar.toc`, in that order), a fixed time stamp, stored and not compressed. CI builds it in two time zones and compares the sha256.
 
+The zip is stored without compression on purpose (131 KB): the same sha256 on every machine matters more than the size, so do not "fix" it.
+
 ## Cut a release
 
 1. On a branch from `main`, make the change and bump the version in **all four places** together: `## Version:` in `toawowchar/toawowchar.toc`, `ADDON_VERSION` in `toawowchar/toawowchar.lua`, the `Version X.Y.Z` line under «Status» in `toawowchar/README.md`, and a new `## [X.Y.Z] - YYYY-MM-DD` entry in `CHANGELOG.md` (with its link at the bottom). Any change to a file in the zip needs a new version, even a typo: wowchar serves the zip under a name that carries the version and caches it for a year.
@@ -79,5 +81,3 @@ The text format is **owned by wowchar** (`toaweb/toawowchar`): the prefixes, for
 ## License
 
 MIT, copyright toaweb; see [LICENSE](LICENSE).
-
-TODO(owner): confirm the license. MIT is the default chosen for the first release; the owner has not confirmed it.
