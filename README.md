@@ -12,8 +12,8 @@ This repository holds the addon, its tests and the scripts that build the downlo
 | `test/` | The tests (Node's built-in `node:test`, no packages) and the Lua stubs of the game they run the addon against (`test/lua/`) |
 | `test/contract.json` | A **copy** of the limits wowchar's server checks; see «The contract with wowchar» |
 | `test/fixtures/` | Example exports the addon must keep making byte for byte |
-| `scripts/` | `test.sh` (runs the tests in Docker), `check-version.py`, `build-zip.py` |
-| `.github/workflows/` | `ci.yml` (tests on every push to `main` and every pull request), `release.yml` (a tag publishes a release) |
+| `scripts/` | `test.sh` (runs the tests in Docker), `check-version.py`, `check-bump.py` (the pull request's version gate), `build-zip.py` |
+| `.github/workflows/` | `ci.yml` (tests on every push to `main` and every pull request), `release.yml` (a tag builds, then publishes a release in a second job) |
 | `CHANGELOG.md` | Keep a Changelog; every release has an entry |
 
 ## Run the tests
@@ -43,8 +43,8 @@ The zip is stored without compression on purpose (131 KB): the same sha256 on ev
 
 ## Cut a release
 
-1. On a branch from `main`, make the change and bump the version in **all four places** together: `## Version:` in `toawowchar/toawowchar.toc`, `ADDON_VERSION` in `toawowchar/toawowchar.lua`, the `Version X.Y.Z` line under «Status» in `toawowchar/README.md`, and a new `## [X.Y.Z] - YYYY-MM-DD` entry in `CHANGELOG.md` (with its link at the bottom). Any change to a file in the zip needs a new version, even a typo: wowchar serves the zip under a name that carries the version and caches it for a year.
-2. `scripts/test.sh` and `python3 scripts/check-version.py` pass. Open a pull request; CI runs the same.
+1. On a branch from `main`, make the change and bump the version in **all five places** together: `## Version:` in `toawowchar/toawowchar.toc`, `ADDON_VERSION` and the first line (`-- toawowchar X.Y.Z`) in `toawowchar/toawowchar.lua`, the `Version X.Y.Z` line under «Status» in `toawowchar/README.md`, and a new `## [X.Y.Z] - YYYY-MM-DD` entry in `CHANGELOG.md` (with its link at the bottom). The pull request's CI fails otherwise (`scripts/check-bump.py`). Any change to a file in the zip needs a new version, even a typo: wowchar serves the zip under a name that carries the version and caches it for a year.
+2. `scripts/test.sh` and `python3 scripts/check-version.py` pass. Open a pull request; CI runs the same, and `python3 scripts/check-bump.py origin/main` (the version is higher than `main`'s whenever a file in the zip changed).
 3. Merge to `main`. The owner then tags that commit and pushes the tag:
 
    ```sh
@@ -52,7 +52,7 @@ The zip is stored without compression on purpose (131 KB): the same sha256 on ev
    git push origin vX.Y.Z
    ```
 
-4. The tag starts `release.yml`. It checks that the tag is on `main` and equals the version, runs the tests, builds the zip and publishes a GitHub Release with the CHANGELOG text of the version and these assets:
+4. The tag starts `release.yml`. It checks that the tag is on `main` and equals the version, runs the tests and builds the zip (job `build`, read-only token); a second job (`publish`, no checkout) verifies the files against `SHA256SUMS` and publishes a GitHub Release with the CHANGELOG text of the version and these assets:
 
    | Asset | What |
    |---|---|

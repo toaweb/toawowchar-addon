@@ -1,5 +1,5 @@
-// The release scripts: scripts/check-version.py (the version check) and scripts/build-zip.py
-// (the deterministic zip and SHA256SUMS). They are run as the release workflow runs them, on
+// The release scripts: scripts/check-version.py (the version check), scripts/check-bump.py (the pull
+// request's version gate) and scripts/build-zip.py (the deterministic zip and SHA256SUMS). They are run as the release workflow runs them, on
 // copies of this repository's files in a temporary directory, so a test can damage a file
 // without touching the real one.
 import { spawnSync } from 'node:child_process'
@@ -210,6 +210,179 @@ describe('scripts/check-version.py', () => {
       expect(r.status).toBe(1)
       expect(r.stderr).toContain('is not vMAJOR.MINOR.PATCH')
     })
+  })
+})
+
+// ── The version gate of a pull request ─────────────────────────────────────
+
+const GIT_ENV = {
+  GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
+  GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+}
+
+function git(dir, ...args) {
+  const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...process.env, ...GIT_ENV } })
+  if (r.error) throw r.error
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
+  return r.stdout
+}
+
+/** A git repository holding what check-bump.py reads, committed on `main` as the base. */
+function baseRepo() {
+  const dir = copyRepo()
+  mkdirSync(join(dir, 'scripts'))
+  for (const f of ['build-zip.py', 'addon_info.py']) cpSync(join(ROOT, 'scripts', f), join(dir, 'scripts', f))
+  mkdirSync(join(dir, 'test'))
+  writeFileSync(join(dir, 'test', 'some.test.mjs'), '// a test\n')
+  writeFileSync(join(dir, 'AGENTS.md'), '# rules\n')
+  git(dir, 'init', '--quiet', '--initial-branch=main')
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '--quiet', '-m', 'base')
+  return dir
+}
+
+const versionOf = dir => /^## Version: (\S+)$/m.exec(readFileSync(join(dir, 'toawowchar/toawowchar.toc'), 'utf8'))[1]
+
+/** Sets the five places to `to` and adds a CHANGELOG entry with `text`. */
+function bump(dir, to, { text = '### Fixed\n- a change for the test\n', skip = [] } = {}) {
+  const from = versionOf(dir)
+  const places = {
+    toc: ['toawowchar/toawowchar.toc', s => s.replace(`## Version: ${from}`, `## Version: ${to}`)],
+    lua: ['toawowchar/toawowchar.lua', s => s.replace(`local ADDON_VERSION = "${from}"`, `local ADDON_VERSION = "${to}"`)],
+    header: ['toawowchar/toawowchar.lua', s => s.replace(`-- toawowchar ${from}\n`, `-- toawowchar ${to}\n`)],
+    readme: ['toawowchar/README.md', s => s.replace(new RegExp(`^Version ${from.replaceAll('.', '\\.')}\\b`, 'm'), `Version ${to}`)],
+    changelog: ['CHANGELOG.md', s => s.replace(`## [${from}] - `, `## [${to}] - 2026-10-23\n\n${text}\n## [${from}] - `)],
+  }
+  for (const [name, [file, change]] of Object.entries(places)) {
+    if (skip.includes(name)) continue
+    const before = readFileSync(join(dir, file), 'utf8')
+    const after = change(before)
+    if (after === before) throw new Error(`bump: nothing changed in ${file} for ${name}`)
+    writeFileSync(join(dir, file), after)
+  }
+}
+
+const gate = (dir, base = 'main') => py('check-bump.py', ['--root', dir, base])
+
+describe('scripts/check-bump.py', () => {
+  it('passes when nothing changed, and says so', () => {
+    const r = gate(baseRepo())
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/^version bump: OK \(no zip input changed against main\)\n$/)
+  })
+
+  it('passes when only docs, tests and workflows changed: the zip is the same', () => {
+    const dir = baseRepo()
+    writeFileSync(join(dir, 'AGENTS.md'), '# other rules\n')
+    writeFileSync(join(dir, 'test', 'some.test.mjs'), '// another test\n')
+    mkdirSync(join(dir, '.github/workflows'), { recursive: true })
+    writeFileSync(join(dir, '.github/workflows/ci.yml'), 'name: CI\n')
+    edit(dir, 'CHANGELOG.md', s => `${s}\n`)
+    const r = gate(dir)
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+
+  it('passes when a zip file changed and the version is higher in all five places, with a CHANGELOG entry', () => {
+    const dir = baseRepo()
+    edit(dir, 'toawowchar/toawowchar.lua', s => `${s}-- a comment\n`)
+    bump(dir, '0.4.2')
+    const r = gate(dir)
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/zip inputs changed against main \(.*toawowchar\/toawowchar\.lua/)
+  })
+
+  it('sees a change that is already committed, not only one in the working tree', () => {
+    const dir = baseRepo()
+    git(dir, 'switch', '--quiet', '--create', 'change')
+    edit(dir, 'toawowchar/toawowchar.lua', s => `${s}-- a comment\n`)
+    git(dir, 'commit', '--quiet', '-am', 'change')
+    const r = gate(dir)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/the TOC's ## Version is still \d+\.\d+\.\d+: raise it/)
+  })
+
+  it.each([
+    ['toawowchar/toawowchar.lua'],
+    ['toawowchar/toawowchar.toc'],
+    ['toawowchar/README.md'],
+    ['scripts/build-zip.py'],
+    ['scripts/addon_info.py'],
+  ])('fails when %s changed and the version was not raised: it names the file and every place', file => {
+    const dir = baseRepo()
+    edit(dir, file, s => `${s}${file.endsWith('.py') ? '# ' : file.endsWith('.lua') ? '-- ' : file.endsWith('.toc') ? '# ' : ''}a typo fix\n`)
+    const r = gate(dir)
+    expect(r.status).toBe(1)
+    expect(r.stdout).toMatch(/^version bump: FAILED/)
+    expect(r.stderr).toContain(file)
+    for (const place of ["the TOC's ## Version", "the Lua's ADDON_VERSION", "the Lua's first line", "the README's version line", 'the newest CHANGELOG entry']) {
+      expect(r.stderr, place).toContain(`${place} is still `)
+    }
+  })
+
+  it.each([
+    ['toc'], ['lua'], ['header'], ['readme'], ['changelog'],
+  ])('fails when the version is raised everywhere but %s', place => {
+    const dir = baseRepo()
+    edit(dir, 'toawowchar/toawowchar.lua', s => `${s}-- a comment\n`)
+    bump(dir, '0.4.2', { skip: [place] })
+    const r = gate(dir)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/is still 0\.4\.1: raise it/)
+  })
+
+  it('fails when the version is lower than the base\'s, even though a zip file changed', () => {
+    const dir = baseRepo()
+    edit(dir, 'toawowchar/toawowchar.lua', s => `${s}-- a comment\n`)
+    bump(dir, '0.4.0')
+    const r = gate(dir)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain("the TOC's ## Version is 0.4.0, lower than 0.4.1 at main")
+    expect(r.stderr).toContain('the newest CHANGELOG entry is 0.4.0, lower than 0.4.1 at main')
+  })
+
+  it('fails when the version is lowered although no zip file changed otherwise', () => {
+    const dir = baseRepo()
+    edit(dir, 'toawowchar/toawowchar.toc', s => s.replace(/^## Version: .*$/m, '## Version: 0.3.0'))
+    const r = gate(dir)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain("lower than 0.4.1 at main")
+  })
+
+  it('compares numbers, not text: 0.4.10 is higher than 0.4.9', () => {
+    const dir = baseRepo()
+    bump(dir, '0.4.9')
+    git(dir, 'commit', '--quiet', '-am', 'base 0.4.9')
+    git(dir, 'switch', '--quiet', '--create', 'next')
+    edit(dir, 'toawowchar/toawowchar.lua', s => `${s}-- a comment\n`)
+    bump(dir, '0.4.10')
+    const r = gate(dir)
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+
+  it('fails when the new version has a CHANGELOG heading but no text', () => {
+    const dir = baseRepo()
+    edit(dir, 'toawowchar/toawowchar.lua', s => `${s}-- a comment\n`)
+    bump(dir, '0.4.2', { text: '' })
+    const r = gate(dir)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('CHANGELOG.md: the entry for 0.4.2 has no text')
+  })
+
+  it('fails on a base that is not a commit, or that looks like an option', () => {
+    const dir = baseRepo()
+    for (const base of ['no-such-branch', '']) {
+      const r = gate(dir, base)
+      expect(r.status, base).toBe(1)
+      expect(r.stderr, base).toMatch(/error: the base .* is not a (git ref|commit here)/)
+    }
+    const option = py('check-bump.py', ['--root', dir, '--', '--output=x'])
+    expect(option.status).toBe(1)
+    expect(option.stderr).toContain('is not a git ref')
   })
 })
 
