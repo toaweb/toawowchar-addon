@@ -5,7 +5,7 @@
 #
 # The base image is pinned by digest; `docker pull node:24-alpine` and take the new digest
 # to move it. tzdata is there so the zip test can really run in other time zones.
-FROM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
 
 RUN apk add --no-cache git lua5.1 python3 tzdata \
  && ln -sf /usr/bin/lua5.1 /usr/local/bin/lua \
