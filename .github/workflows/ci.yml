@@ -16,8 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # fetch-depth 0: the version gate below compares with the base branch. On a pull request
+      # the checkout is the merge of the branch into its base, so the diff is what would land.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       # The Lua tests (Lua 5.1), the checks of the export against the contract, and the tests of
@@ -28,6 +31,15 @@ jobs:
       # The TOC, the Lua, the README and the CHANGELOG agree on the version; ## Interface is valid.
       - name: Version check
         run: python3 scripts/check-version.py
+
+      # A pull request that changes what goes into the zip (toawowchar/*, build-zip.py, addon_info.py)
+      # must raise the version in all five places and add a CHANGELOG entry (versioning standard).
+      # The base branch comes through env:, never from ${{ }} inside the script.
+      - name: Version bump against the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/check-bump.py "origin/${BASE_REF}"
 
       # The zip must be the same bytes whatever the time zone of the machine that makes it.
       - name: The zip is the same in two time zones
